@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <title>Расписание</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <div class="app">
+    <header class="top">
+      <div>
+        <p class="eyebrow">Планирование смен</p>
+        <h1>Расписание</h1>
+      </div>
+      <nav class="tabs" id="tabs">
+        <button type="button" class="tab active" data-tab="people">Люди</button>
+        <button type="button" class="tab" data-tab="vacations">Отпуска</button>
+        <button type="button" class="tab" data-tab="demand">Потребность</button>
+        <button type="button" class="tab" data-tab="schedule">График</button>
+        <button type="button" class="tab" data-tab="bookings">Брони</button>
+      </nav>
+    </header>
+
+    <main>
+
+<!-- PEOPLE -->
+<section id="panel-people" class="panel active">
+  <div class="panel-head">
+    <h2>Люди</h2>
+    <button type="button" class="btn" id="btn-refresh-accounts">Обновить</button>
+  </div>
+
+  <p class="hint">
+    Выберите сотрудника из списка аккаунтов и настройте его график.
+  </p>
+
+  <ul class="list" id="emp-list"></ul>
+</section>
+
+      <!-- VACATIONS -->
+      <section id="panel-vacations" class="panel">
+        <div class="panel-head">
+          <h2>Отпуска</h2>
+          <button type="button" class="btn primary" id="btn-add-vac">Добавить</button>
+        </div>
+        <ul class="list" id="vac-list"></ul>
+      </section>
+
+      <!-- DEMAND -->
+      <section id="panel-demand" class="panel">
+        <div class="panel-head">
+          <h2>Потребность в людях</h2>
+          <button type="button" class="btn primary" id="btn-save-template">Сохранить шаблон</button>
+        </div>
+        <p class="hint">Заполните один раз, сколько людей обычно нужно по дням недели. Для отдельных дат можно задать исключения.</p>
+        <div class="template-grid" id="demand-template-grid"></div>
+        <div class="panel-head section-gap">
+          <h2>Исключения по датам</h2>
+          <button type="button" class="btn" id="btn-add-override">Добавить дату</button>
+        </div>
+        <ul class="list" id="override-list"></ul>
+      </section>
+
+      <!-- SCHEDULE -->
+      <section id="panel-schedule" class="panel">
+        <div class="panel-head">
+          <h2>Расписание</h2>
+          <div class="row-actions">
+            <button type="button" class="btn" id="btn-gen-current">Этот месяц</button>
+            <button type="button" class="btn primary" id="btn-gen-next">След. месяц</button>
+          </div>
+        </div>
+        <p class="hint">Нажми на день — увидишь, кто во сколько работает. Если людей мало, там же можно поставить бронь.</p>
+        <div class="month-bar">
+          <label>
+            Месяц
+            <input type="month" id="month-picker" />
+          </label>
+          <a class="btn ghost" id="btn-xlsx" href="#" download>Excel</a>
+        </div>
+        <p class="hint" id="schedule-meta"></p>
+
+        <div id="days-view">
+          <div class="month-days-grid" id="month-days-grid"></div>
+        </div>
+
+        <div id="day-view" class="day-view hidden">
+          <div class="day-view-top">
+            <button type="button" class="btn" id="btn-back-days">← Все дни</button>
+            <h3 id="day-view-title"></h3>
+          </div>
+          <p class="hint" id="day-view-meta"></p>
+          <div id="day-view-booking" class="day-view-booking"></div>
+          <div class="timeline-axis" id="day-view-axis"></div>
+          <div class="timeline" id="day-view-timeline"></div>
+          <div class="day-hours-wrap" id="day-hours-wrap"></div>
+          <div class="time-list" id="day-view-list"></div>
+        </div>
+
+        <details class="matrix-details">
+          <summary>Таблица по сотрудникам за месяц</summary>
+          <div class="table-wrap" id="schedule-table"></div>
+        </details>
+      </section>
+
+      <!-- BOOKINGS -->
+      <section id="panel-bookings" class="panel">
+        <div class="panel-head">
+          <h2>Бронь</h2>
+        </div>
+        <p class="hint">Только дни, где людей мало: нужно больше, чем выходит по графику. Отметьте «Бронь», когда место закрыли.</p>
+        <ul class="list" id="booking-list"></ul>
+      </section>
+    </main>
+  </div>
+
+  <!-- EMP MODAL -->
+  <dialog id="emp-modal">
+    <form method="dialog" id="emp-form">
+      <h3 id="emp-modal-title">Сотрудник</h3>
+      <input type="hidden" id="emp-id" />
+      <label>Имя
+        <input required name="name" id="emp-name" autocomplete="name" />
+      </label>
+      <label>Тип графика
+        <select id="emp-type" required>
+          <option value="3/3">3/3 (три через три)</option>
+          <option value="2/2">2/2 (два через два)</option>
+          <option value="weekdays">По дням недели (напр. пн и ср)</option>
+          <option value="5/2">5/2 (пн–пт)</option>
+        </select>
+      </label>
+      <div id="cycle-fields">
+        <label>Начало цикла (первый рабочий день)
+          <input type="date" id="emp-cycle-start" />
+        </label>
+        <p class="hint">От этой даты считаются рабочие/выходные по циклу.</p>
+      </div>
+      <div id="weekday-fields" class="hidden">
+        <p class="label">Дни и время (можно разные)</p>
+        <p class="hint">Пример: вт и чт 12:00–01:00, пт 20:00–01:00</p>
+        <div id="day-slots" class="slot-list"></div>
+        <button type="button" class="btn" id="btn-add-slot">+ Добавить день</button>
+      </div>
+      <div id="default-time-fields" class="time-row">
+        <label>Время с
+          <input type="time" id="emp-time-start" />
+        </label>
+        <label>Время по
+          <input type="time" id="emp-time-end" />
+        </label>
+      </div>
+      <p class="hint" id="default-time-hint">Для 2/2, 3/3 и 5/2 — одно время на все рабочие дни.</p>
+      <label>Заметка
+        <input id="emp-note" />
+      </label>
+      <div class="dialog-actions">
+        <button type="button" class="btn" id="emp-cancel">Отмена</button>
+        <button type="submit" class="btn primary">Сохранить</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- OVERRIDE MODAL -->
+  <dialog id="override-modal">
+    <form method="dialog" id="override-form">
+      <h3>Исключение по дате</h3>
+      <label>Дата
+        <input type="date" id="override-date" required />
+      </label>
+      <label>Нужно людей
+        <input type="number" min="0" id="override-required" required />
+      </label>
+      <label>Комментарий
+        <input id="override-comment" />
+      </label>
+      <div class="dialog-actions">
+        <button type="button" class="btn" id="override-cancel">Отмена</button>
+        <button type="submit" class="btn primary">Сохранить</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- VAC MODAL -->
+  <dialog id="vac-modal">
+    <form method="dialog" id="vac-form">
+      <h3>Отпуск</h3>
+      <label>Сотрудник
+        <select id="vac-emp" required></select>
+      </label>
+      <label>С
+        <input type="date" id="vac-start" required />
+      </label>
+      <label>По
+        <input type="date" id="vac-end" required />
+      </label>
+      <label>Комментарий
+        <input id="vac-comment" />
+      </label>
+      <div class="dialog-actions">
+        <button type="button" class="btn" id="vac-cancel">Отмена</button>
+        <button type="submit" class="btn primary">Сохранить</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div class="modal-backdrop hidden" id="confirm-modal">
+  <div class="modal">
+    <h3 id="confirm-title">Подтверждение</h3>
+
+    <p class="modal-text" id="confirm-text"></p>
+
+    <div class="modal-actions">
+      <button type="button" class="btn btn-secondary" id="confirm-cancel">
+        Отмена
+      </button>
+
+      <button type="button" class="btn btn-danger" id="confirm-ok">
+        Подтвердить
+      </button>
+    </div>
+  </div>
+</div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
