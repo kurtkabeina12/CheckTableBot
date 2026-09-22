@@ -4,23 +4,35 @@ from __future__ import annotations
 
 import json
 import os
+
 from contextlib import contextmanager
+from pathlib import Path
 from typing import Any, Iterator
 
 import psycopg
+from dotenv import load_dotenv
 from psycopg.rows import dict_row
 
-from pathlib import Path
 
-from dotenv import load_dotenv
+load_dotenv(
+    Path(__file__).resolve().parent / ".env"
+)
 
-load_dotenv(Path(__file__).resolve().parent / ".env")
-DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
+DATABASE_URL = os.getenv(
+    "DATABASE_URL",
+    "",
+).strip()
 
+
+# ============================================================
+# CONNECTION
+# ============================================================
 
 def get_connection():
     if not DATABASE_URL:
-        raise RuntimeError("Не задана переменная DATABASE_URL")
+        raise RuntimeError(
+            "Не задана переменная DATABASE_URL"
+        )
 
     return psycopg.connect(
         DATABASE_URL,
@@ -42,10 +54,18 @@ def db() -> Iterator[Any]:
         conn.close()
 
 
+# ============================================================
+# INIT DB
+# ============================================================
+
 def init_db() -> None:
     """Создаёт только таблицы приложения."""
 
     with db() as conn:
+
+        # ----------------------------------------------------
+        # Графики сотрудников
+        # ----------------------------------------------------
 
         conn.execute(
             """
@@ -65,6 +85,7 @@ def init_db() -> None:
                 day_slots JSONB,
 
                 time_start TEXT DEFAULT '',
+
                 time_end TEXT DEFAULT '',
 
                 active BOOLEAN NOT NULL DEFAULT TRUE,
@@ -72,12 +93,17 @@ def init_db() -> None:
                 note TEXT DEFAULT '',
 
                 created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
                 updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
                 UNIQUE(account_id)
             )
             """
         )
+
+        # ----------------------------------------------------
+        # Отпуска
+        # ----------------------------------------------------
 
         conn.execute(
             """
@@ -89,6 +115,7 @@ def init_db() -> None:
                     ON DELETE CASCADE,
 
                 start_date DATE NOT NULL,
+
                 end_date DATE NOT NULL,
 
                 comment TEXT DEFAULT '',
@@ -101,12 +128,17 @@ def init_db() -> None:
             """
         )
 
+        # ----------------------------------------------------
+        # Сохранённые расписания
+        # ----------------------------------------------------
+
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS schedules (
                 id SERIAL PRIMARY KEY,
 
                 year INTEGER NOT NULL,
+
                 month INTEGER NOT NULL,
 
                 created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -138,7 +170,9 @@ def _normalize_day_slots(
             continue
 
         try:
-            weekday = int(item.get("weekday"))
+            weekday = int(
+                item.get("weekday")
+            )
         except (TypeError, ValueError):
             continue
 
@@ -212,14 +246,20 @@ def _prepare_employee(
         except json.JSONDecodeError:
             day_slots = []
 
-    day_slots = _normalize_day_slots(day_slots)
+    day_slots = _normalize_day_slots(
+        day_slots
+    )
 
     if not day_slots and data["weekdays"]:
         day_slots = [
             {
                 "weekday": int(day),
-                "time_start": data.get("time_start") or "",
-                "time_end": data.get("time_end") or "",
+                "time_start": (
+                    data.get("time_start") or ""
+                ),
+                "time_end": (
+                    data.get("time_end") or ""
+                ),
             }
             for day in data["weekdays"]
         ]
@@ -227,14 +267,173 @@ def _prepare_employee(
     data["day_slots"] = day_slots
 
     if day_slots and not data["weekdays"]:
-        data["weekdays"] = _weekdays_from_slots(day_slots)
+        data["weekdays"] = _weekdays_from_slots(
+            day_slots
+        )
 
-    data["time_start"] = data.get("time_start") or ""
-    data["time_end"] = data.get("time_end") or ""
+    data["time_start"] = (
+        data.get("time_start") or ""
+    )
 
-    data["active"] = bool(data.get("active", False))
+    data["time_end"] = (
+        data.get("time_end") or ""
+    )
+
+    data["active"] = bool(
+        data.get("active", False)
+    )
 
     return data
+
+
+# ============================================================
+# ACCOUNTS / AUTH
+# ============================================================
+
+def get_account_by_id(
+    account_id: int,
+    include_password: bool = False,
+) -> dict[str, Any] | None:
+    """
+    Получает account по внутреннему id.
+
+    include_password=True нужен только для внутренних
+    операций, если когда-нибудь потребуется password_hash.
+
+    По умолчанию password_hash вообще не выбирается.
+    """
+
+    password_field = (
+        ", a.password_hash"
+        if include_password
+        else ""
+    )
+
+    with db() as conn:
+
+        row = conn.execute(
+            f"""
+            SELECT
+                a.id,
+                a.user_id,
+                a.username,
+                a.allowed_slots,
+                a.tg_id,
+                a.role
+                {password_field},
+
+                CASE
+                    WHEN es.id IS NOT NULL
+                    THEN TRUE
+                    ELSE FALSE
+                END AS configured,
+
+                es.schedule_type,
+                es.cycle_start,
+                es.weekdays,
+                es.day_slots,
+                es.time_start,
+                es.time_end,
+                es.active,
+                es.note
+
+            FROM accounts a
+
+            LEFT JOIN employee_schedules es
+                ON es.account_id = a.id
+
+            WHERE a.id = %s
+
+            LIMIT 1
+            """,
+            (account_id,),
+        ).fetchone()
+
+        if not row:
+            return None
+
+        data = dict(row)
+
+        data["name"] = (
+            data.get("username")
+            or f"Сотрудник #{data['id']}"
+        )
+
+        data["configured"] = bool(
+            data.get("configured")
+        )
+
+        weekdays = data.get("weekdays")
+
+        if isinstance(weekdays, str):
+            try:
+                weekdays = json.loads(
+                    weekdays
+                )
+            except json.JSONDecodeError:
+                weekdays = []
+
+        data["weekdays"] = weekdays or []
+
+        slots = data.get("day_slots")
+
+        if isinstance(slots, str):
+            try:
+                slots = json.loads(slots)
+            except json.JSONDecodeError:
+                slots = []
+
+        data["day_slots"] = _normalize_day_slots(
+            slots
+        )
+
+        data["time_start"] = (
+            data.get("time_start") or ""
+        )
+
+        data["time_end"] = (
+            data.get("time_end") or ""
+        )
+
+        return data
+
+
+def get_account_by_username(
+    username: str,
+) -> dict[str, Any] | None:
+    """
+    Получает account по логину.
+
+    Используется при обычной авторизации
+    через username + password.
+    """
+
+    with db() as conn:
+
+        row = conn.execute(
+            """
+            SELECT
+                id,
+                user_id,
+                username,
+                allowed_slots,
+                tg_id,
+                password_hash,
+                role
+
+            FROM accounts
+
+            WHERE username = %s
+
+            LIMIT 1
+            """,
+            (username,),
+        ).fetchone()
+
+        if not row:
+            return None
+
+        return dict(row)
 
 
 # ============================================================
@@ -246,6 +445,8 @@ def list_accounts() -> list[dict[str, Any]]:
     Все существующие accounts.
 
     Используется WebApp для выбора сотрудника.
+
+    password_hash здесь НИКОГДА не возвращается.
     """
 
     with db() as conn:
@@ -256,8 +457,11 @@ def list_accounts() -> list[dict[str, Any]]:
                 a.id,
                 a.username,
                 a.tg_id,
+                a.role,
+
                 CASE
-                    WHEN es.id IS NOT NULL THEN TRUE
+                    WHEN es.id IS NOT NULL
+                    THEN TRUE
                     ELSE FALSE
                 END AS configured,
 
@@ -285,7 +489,6 @@ def list_accounts() -> list[dict[str, Any]]:
 
             data = dict(row)
 
-            data["id"] = data["id"]
             data["name"] = (
                 data.get("username")
                 or f"Сотрудник #{data['id']}"
@@ -299,7 +502,9 @@ def list_accounts() -> list[dict[str, Any]]:
 
             if isinstance(weekdays, str):
                 try:
-                    weekdays = json.loads(weekdays)
+                    weekdays = json.loads(
+                        weekdays
+                    )
                 except json.JSONDecodeError:
                     weekdays = []
 
@@ -309,26 +514,36 @@ def list_accounts() -> list[dict[str, Any]]:
 
             if isinstance(slots, str):
                 try:
-                    slots = json.loads(slots)
+                    slots = json.loads(
+                        slots
+                    )
                 except json.JSONDecodeError:
                     slots = []
 
-            data["day_slots"] = _normalize_day_slots(slots)
+            data["day_slots"] = _normalize_day_slots(
+                slots
+            )
 
-            data["time_start"] = data.get("time_start") or ""
-            data["time_end"] = data.get("time_end") or ""
+            data["time_start"] = (
+                data.get("time_start") or ""
+            )
+
+            data["time_end"] = (
+                data.get("time_end") or ""
+            )
 
             result.append(data)
 
         return result
+
+
 def get_account_by_tg_id(
     tg_id: int,
 ) -> dict[str, Any] | None:
     """
     Находит существующий account по Telegram ID.
 
-    accounts является источником пользователей системы.
-    Новые employee/accounts здесь не создаются.
+    Новые accounts здесь НЕ создаются.
     """
 
     with db() as conn:
@@ -341,9 +556,11 @@ def get_account_by_tg_id(
                 a.username,
                 a.allowed_slots,
                 a.tg_id,
+                a.role,
 
                 CASE
-                    WHEN es.id IS NOT NULL THEN TRUE
+                    WHEN es.id IS NOT NULL
+                    THEN TRUE
                     ELSE FALSE
                 END AS configured,
 
@@ -386,7 +603,9 @@ def get_account_by_tg_id(
 
         if isinstance(weekdays, str):
             try:
-                weekdays = json.loads(weekdays)
+                weekdays = json.loads(
+                    weekdays
+                )
             except json.JSONDecodeError:
                 weekdays = []
 
@@ -396,11 +615,15 @@ def get_account_by_tg_id(
 
         if isinstance(slots, str):
             try:
-                slots = json.loads(slots)
+                slots = json.loads(
+                    slots
+                )
             except json.JSONDecodeError:
                 slots = []
 
-        data["day_slots"] = _normalize_day_slots(slots)
+        data["day_slots"] = _normalize_day_slots(
+            slots
+        )
 
         data["time_start"] = (
             data.get("time_start") or ""
@@ -411,6 +634,7 @@ def get_account_by_tg_id(
         )
 
         return data
+
 
 def list_employees(
     active_only: bool = True,
@@ -437,7 +661,8 @@ def list_employees(
                 es.updated_at,
 
                 a.username,
-                a.tg_id
+                a.tg_id,
+                a.role
 
             FROM employee_schedules es
 
@@ -454,10 +679,14 @@ def list_employees(
             ORDER BY a.username
         """
 
-        rows = conn.execute(sql).fetchall()
+        rows = conn.execute(
+            sql
+        ).fetchall()
 
         return [
-            _prepare_employee(dict(row))
+            _prepare_employee(
+                dict(row)
+            )
             for row in rows
         ]
 
@@ -485,7 +714,8 @@ def get_employee(
                 es.updated_at,
 
                 a.username,
-                a.tg_id
+                a.tg_id,
+                a.role
 
             FROM employee_schedules es
 
@@ -500,8 +730,14 @@ def get_employee(
         if not row:
             return None
 
-        return _prepare_employee(dict(row))
+        return _prepare_employee(
+            dict(row)
+        )
 
+
+# ============================================================
+# EMPLOYEE SCHEDULE
+# ============================================================
 
 def save_employee_schedule(
     account_id: int,
@@ -515,10 +751,14 @@ def save_employee_schedule(
     active: bool = True,
 ) -> dict[str, Any]:
 
-    slots = _normalize_day_slots(day_slots)
+    slots = _normalize_day_slots(
+        day_slots
+    )
 
     if weekdays is None and slots:
-        weekdays = _weekdays_from_slots(slots)
+        weekdays = _weekdays_from_slots(
+            slots
+        )
 
     with db() as conn:
 
@@ -550,6 +790,7 @@ def save_employee_schedule(
                 note,
                 updated_at
             )
+
             VALUES (
                 %s,
                 %s,
@@ -564,23 +805,46 @@ def save_employee_schedule(
             )
 
             ON CONFLICT(account_id)
+
             DO UPDATE SET
-                schedule_type = EXCLUDED.schedule_type,
-                cycle_start = EXCLUDED.cycle_start,
-                weekdays = EXCLUDED.weekdays,
-                day_slots = EXCLUDED.day_slots,
-                time_start = EXCLUDED.time_start,
-                time_end = EXCLUDED.time_end,
-                active = EXCLUDED.active,
-                note = EXCLUDED.note,
-                updated_at = NOW()
+                schedule_type =
+                    EXCLUDED.schedule_type,
+
+                cycle_start =
+                    EXCLUDED.cycle_start,
+
+                weekdays =
+                    EXCLUDED.weekdays,
+
+                day_slots =
+                    EXCLUDED.day_slots,
+
+                time_start =
+                    EXCLUDED.time_start,
+
+                time_end =
+                    EXCLUDED.time_end,
+
+                active =
+                    EXCLUDED.active,
+
+                note =
+                    EXCLUDED.note,
+
+                updated_at =
+                    NOW()
             """,
             (
                 account_id,
                 schedule_type,
                 cycle_start,
-                json.dumps(weekdays or []),
-                json.dumps(slots, ensure_ascii=False),
+                json.dumps(
+                    weekdays or []
+                ),
+                json.dumps(
+                    slots,
+                    ensure_ascii=False,
+                ),
                 time_start or "",
                 time_end or "",
                 bool(active),
@@ -588,11 +852,14 @@ def save_employee_schedule(
             ),
         )
 
-    employee = get_employee(account_id)
+    employee = get_employee(
+        account_id
+    )
 
     if not employee:
         raise RuntimeError(
-            "Не удалось получить сохранённый график сотрудника"
+            "Не удалось получить "
+            "сохранённый график сотрудника"
         )
 
     return employee
@@ -621,7 +888,9 @@ def update_employee(
     }
 
     if not updates:
-        return get_employee(emp_id)
+        return get_employee(
+            emp_id
+        )
 
     if "day_slots" in updates:
 
@@ -635,14 +904,19 @@ def update_employee(
         )
 
         if "weekdays" not in updates:
-            updates["weekdays"] = _weekdays_from_slots(
-                slots
+            updates["weekdays"] = (
+                _weekdays_from_slots(
+                    slots
+                )
             )
 
     if (
         "weekdays" in updates
         and updates["weekdays"] is not None
-        and not isinstance(updates["weekdays"], str)
+        and not isinstance(
+            updates["weekdays"],
+            str,
+        )
     ):
         updates["weekdays"] = json.dumps(
             updates["weekdays"]
@@ -653,7 +927,10 @@ def update_employee(
         for key in updates
     )
 
-    values = list(updates.values())
+    values = list(
+        updates.values()
+    )
+
     values.append(emp_id)
 
     with db() as conn:
@@ -671,7 +948,9 @@ def update_employee(
             values,
         )
 
-    return get_employee(emp_id)
+    return get_employee(
+        emp_id
+    )
 
 
 def delete_employee(
@@ -679,7 +958,6 @@ def delete_employee(
 ) -> bool:
     """
     Удаляем только настройку графика.
-
     Сам account НЕ удаляется.
     """
 
@@ -688,6 +966,7 @@ def delete_employee(
         cur = conn.execute(
             """
             DELETE FROM employee_schedules
+
             WHERE account_id = %s
             """,
             (emp_id,),
@@ -724,10 +1003,14 @@ def list_vacations(
         params: list[Any] = []
 
         if emp_id is not None:
+
             sql += """
                 WHERE v.account_id = %s
             """
-            params.append(emp_id)
+
+            params.append(
+                emp_id
+            )
 
         sql += """
             ORDER BY v.start_date DESC
@@ -741,13 +1024,18 @@ def list_vacations(
         result = []
 
         for row in rows:
+
             data = dict(row)
 
             if data.get("start_date"):
-                data["start_date"] = data["start_date"].isoformat()
+                data["start_date"] = (
+                    data["start_date"].isoformat()
+                )
 
             if data.get("end_date"):
-                data["end_date"] = data["end_date"].isoformat()
+                data["end_date"] = (
+                    data["end_date"].isoformat()
+                )
 
             result.append(data)
 
@@ -803,7 +1091,9 @@ def add_vacation(
             ),
         )
 
-        vacation_id = cur.fetchone()["id"]
+        vacation_id = (
+            cur.fetchone()["id"]
+        )
 
         row = conn.execute(
             """
@@ -827,8 +1117,13 @@ def add_vacation(
 
         data = dict(row)
 
-        data["start_date"] = data["start_date"].isoformat()
-        data["end_date"] = data["end_date"].isoformat()
+        data["start_date"] = (
+            data["start_date"].isoformat()
+        )
+
+        data["end_date"] = (
+            data["end_date"].isoformat()
+        )
 
         return data
 
@@ -842,6 +1137,7 @@ def delete_vacation(
         cur = conn.execute(
             """
             DELETE FROM vacations
+
             WHERE id = %s
             """,
             (vac_id,),
@@ -882,8 +1178,11 @@ def save_schedule(
             ON CONFLICT(year, month)
 
             DO UPDATE SET
-                created_at = EXCLUDED.created_at,
-                payload = EXCLUDED.payload
+                created_at =
+                    EXCLUDED.created_at,
+
+                payload =
+                    EXCLUDED.payload
             """,
             (
                 year,
@@ -929,8 +1228,13 @@ def get_schedule(
 
         payload = row["payload"]
 
-        if isinstance(payload, str):
-            payload = json.loads(payload)
+        if isinstance(
+            payload,
+            str,
+        ):
+            payload = json.loads(
+                payload
+            )
 
         return {
             "id": row["id"],
@@ -938,7 +1242,10 @@ def get_schedule(
             "month": row["month"],
             "created_at": (
                 row["created_at"].isoformat()
-                if hasattr(row["created_at"], "isoformat")
+                if hasattr(
+                    row["created_at"],
+                    "isoformat",
+                )
                 else row["created_at"]
             ),
             "payload": payload,

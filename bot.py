@@ -51,19 +51,6 @@ TOKEN = os.getenv(
 ).strip()
 
 
-# Telegram ID администраторов
-ADMIN_USERS = {
-    1372024721,
-    706085105,
-    277922602,
-}
-
-
-def is_admin(tg_id: int) -> bool:
-    """Проверяет, является ли Telegram-пользователь администратором."""
-    return tg_id in ADMIN_USERS
-
-
 async def start(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,

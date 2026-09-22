@@ -12,17 +12,53 @@ if (tg) {
   }
 }
 
-const $ = (sel, root = document) => root.querySelector(sel);
-const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
+const $ = (sel, root = document) =>
+  root.querySelector(sel);
 
-const WEEKDAY_NAMES = ["пн", "вт", "ср", "чт", "пт", "сб", "вс"];
+const $$ = (sel, root = document) =>
+  [...root.querySelectorAll(sel)];
+
+const WEEKDAY_NAMES = [
+  "пн",
+  "вт",
+  "ср",
+  "чт",
+  "пт",
+  "сб",
+  "вс",
+];
 
 const state = {
+  /*
+   * =========================
+   * AUTH
+   * =========================
+   */
+
+  auth: {
+    authenticated: false,
+    auth_type: null,
+    account: null,
+  },
+
+  /*
+   * =========================
+   * ACCOUNTS
+   * =========================
+   */
+
   accounts: [],
+
   employees: [],
+
   vacations: [],
 
-  // Только frontend/localStorage
+  /*
+   * =========================
+   * LOCAL STORAGE
+   * =========================
+   */
+
   demandTemplates: JSON.parse(
     localStorage.getItem("demandTemplates") || "[]"
   ),
@@ -35,8 +71,16 @@ const state = {
     localStorage.getItem("bookings") || "[]"
   ),
 
+  /*
+   * =========================
+   * SCHEDULE
+   * =========================
+   */
+
   schedule: null,
+
   selectedDay: null,
+
   editingEmpId: null,
 
   bookingUserName:
@@ -49,8 +93,7 @@ const state = {
 ========================================================= */
 
 async function api(path, options = {}) {
-  const initData =
-    tg?.initData || "";
+  const initData = tg?.initData || "";
 
   const res = await fetch(path, {
     ...options,
@@ -60,8 +103,7 @@ async function api(path, options = {}) {
 
       ...(initData
         ? {
-            "X-Telegram-Init-Data":
-              initData,
+            "X-Telegram-Init-Data": initData,
           }
         : {}),
 
@@ -78,7 +120,6 @@ async function api(path, options = {}) {
       msg =
         data.detail ||
         JSON.stringify(data);
-
     } catch (_) {}
 
     throw new Error(
@@ -97,10 +138,514 @@ async function api(path, options = {}) {
 
 
 /* =========================================================
+   AUTH
+========================================================= */
+
+let authMode = "login";
+
+
+function showLogin() {
+  $("#login-screen")?.classList.remove(
+    "hidden"
+  );
+
+  $("#app")?.classList.add(
+    "hidden"
+  );
+}
+
+
+function showApp() {
+  $("#login-screen")?.classList.add(
+    "hidden"
+  );
+
+  $("#app")?.classList.remove(
+    "hidden"
+  );
+}
+
+
+function setAuthMode(mode) {
+  authMode = mode;
+
+  const title =
+    $("#auth-title");
+
+  const description =
+    $("#auth-description");
+
+  const submit =
+    $("#auth-submit");
+
+  const switchButton =
+    $("#auth-switch");
+
+  if (
+    !title ||
+    !description ||
+    !submit ||
+    !switchButton
+  ) {
+    return;
+  }
+
+  if (mode === "login") {
+    title.textContent = "Вход";
+
+    description.textContent =
+      "Введите логин и пароль";
+
+    submit.textContent = "Войти";
+
+    switchButton.textContent =
+      "Нет аккаунта? Зарегистрироваться";
+  } else {
+    title.textContent =
+      "Регистрация";
+
+    description.textContent =
+      "Создайте аккаунт для входа";
+
+    submit.textContent =
+      "Зарегистрироваться";
+
+    switchButton.textContent =
+      "Уже есть аккаунт? Войти";
+  }
+
+  const error =
+    $("#login-error");
+
+  if (error) {
+    error.textContent = "";
+    error.classList.add("hidden");
+  }
+}
+
+
+function showAuthError(message) {
+  const error =
+    $("#login-error");
+
+  if (!error) {
+    return;
+  }
+
+  error.textContent =
+    message || "Ошибка авторизации";
+
+  error.classList.remove(
+    "hidden"
+  );
+}
+
+
+function configureAccess() {
+  const role =
+    state.auth.account?.role;
+
+  const isAdmin =
+    role === "admin";
+
+  /*
+   * ADMIN:
+   * Люди
+   * Отпуска
+   * Потребность
+   * График
+   * Брони
+   *
+   * USER:
+   * Отпуска
+   * График
+   * Брони
+   */
+
+  const allowedTabs = isAdmin
+    ? [
+        "people",
+        "vacations",
+        "demand",
+        "schedule",
+        "bookings",
+      ]
+    : [
+        "vacations",
+        "schedule",
+        "bookings",
+      ];
+
+  $$(".tab").forEach((tab) => {
+    const allowed =
+      allowedTabs.includes(
+        tab.dataset.tab
+      );
+
+    tab.classList.toggle(
+      "hidden",
+      !allowed
+    );
+  });
+
+  /*
+   * Скрываем административные кнопки
+   * для обычного пользователя.
+   */
+
+  const adminOnlyElements = [
+    "#btn-refresh-accounts",
+    "#btn-save-template",
+    "#btn-add-override",
+    "#btn-gen-current",
+    "#btn-gen-next",
+  ];
+
+  adminOnlyElements.forEach(
+    (selector) => {
+      const element =
+        $(selector);
+
+      if (element) {
+        element.classList.toggle(
+          "hidden",
+          !isAdmin
+        );
+      }
+    }
+  );
+
+  /*
+   * Для user оставляем вкладку
+   * Отпуска доступной для просмотра,
+   * но кнопка добавления скрыта.
+   *
+   * Это потому, что текущий backend
+   * использует account/employee ID,
+   * а список accounts доступен только admin.
+   */
+
+  const addVacationButton =
+    $("#btn-add-vac");
+
+  if (addVacationButton) {
+    addVacationButton.classList.toggle(
+      "hidden",
+      !isAdmin
+    );
+  }
+
+  /*
+   * Удаление отпусков также
+   * скрываем у обычного пользователя.
+   */
+
+  /*
+   * На вкладку schedule можно зайти
+   * всем авторизованным пользователям.
+   */
+
+  switchTab(
+    isAdmin
+      ? "people"
+      : "vacations"
+  );
+}
+
+
+async function checkAuth() {
+  try {
+    const result =
+      await api(
+        "/api/auth/me"
+      );
+
+    state.auth = {
+      authenticated:
+        Boolean(
+          result.authenticated
+        ),
+
+      auth_type:
+        result.auth_type ||
+        null,
+
+      account:
+        result.account ||
+        null,
+    };
+
+    if (
+      !state.auth.authenticated
+    ) {
+      showLogin();
+      return false;
+    }
+
+    showApp();
+
+    configureAccess();
+
+    return true;
+  } catch (e) {
+    /*
+     * 401 означает просто:
+     * пользователь ещё не вошёл.
+     */
+
+    if (
+      e.message ===
+        "Not authenticated" ||
+      e.message ===
+        "Not authenticated"
+    ) {
+      state.auth = {
+        authenticated: false,
+        auth_type: null,
+        account: null,
+      };
+
+      showLogin();
+
+      return false;
+    }
+
+    /*
+     * Telegram может вернуть 403,
+     * если tg_id не найден в accounts.
+     */
+
+    if (
+      tg?.initData &&
+      e.message
+    ) {
+      state.auth = {
+        authenticated: false,
+        auth_type: null,
+        account: null,
+      };
+
+      showLogin();
+
+      showAuthError(
+        e.message
+      );
+
+      return false;
+    }
+
+    throw e;
+  }
+}
+
+
+$("#auth-switch")?.addEventListener(
+  "click",
+  () => {
+    setAuthMode(
+      authMode === "login"
+        ? "register"
+        : "login"
+    );
+  }
+);
+
+
+$("#login-form")?.addEventListener(
+  "submit",
+  async (event) => {
+    event.preventDefault();
+
+    const username =
+      $("#login-username")
+        ?.value
+        .trim();
+
+    const password =
+      $("#login-password")
+        ?.value || "";
+
+    if (!username) {
+      showAuthError(
+        "Введите логин"
+      );
+      return;
+    }
+
+    if (!password) {
+      showAuthError(
+        "Введите пароль"
+      );
+      return;
+    }
+
+    const submit =
+      $("#auth-submit");
+
+    if (submit) {
+      submit.disabled = true;
+    }
+
+    const error =
+      $("#login-error");
+
+    if (error) {
+      error.classList.add(
+        "hidden"
+      );
+
+      error.textContent = "";
+    }
+
+    try {
+      const endpoint =
+        authMode === "login"
+          ? "/api/auth/login"
+          : "/api/auth/register";
+
+      const result =
+        await api(
+          endpoint,
+          {
+            method: "POST",
+
+            body: JSON.stringify({
+              username,
+              password,
+            }),
+          }
+        );
+
+      state.auth = {
+        authenticated:
+          Boolean(
+            result.authenticated
+          ),
+
+        auth_type:
+          result.auth_type ||
+          "password",
+
+        account:
+          result.account ||
+          null,
+      };
+
+      $("#login-password").value =
+        "";
+
+      showApp();
+
+      configureAccess();
+
+      await initAuthorizedApp();
+    } catch (e) {
+      console.error(
+        "Auth error:",
+        e
+      );
+
+      showAuthError(
+        e.message ||
+          "Ошибка авторизации"
+      );
+    } finally {
+      if (submit) {
+        submit.disabled =
+          false;
+      }
+    }
+  }
+);
+
+
+/* =========================================================
+   AUTHORIZED APP INIT
+========================================================= */
+
+async function initAuthorizedApp() {
+  initMonthPicker();
+
+  const isAdmin =
+    state.auth.account?.role ===
+    "admin";
+
+  /*
+   * Только admin может получать
+   * список всех accounts.
+   */
+
+  if (isAdmin) {
+    await loadAccounts();
+  }
+
+  /*
+   * Отпуска доступны всем
+   * авторизованным пользователям.
+   */
+
+  await loadVacations();
+
+  /*
+   * Потребность существует
+   * только у admin.
+   */
+
+  if (isAdmin) {
+    loadDemand();
+  }
+
+  /*
+   * Пытаемся показать уже
+   * существующий график.
+   *
+   * Здесь НЕ генерируем график.
+   */
+
+  try {
+    const val =
+      $("#month-picker")
+        ?.value;
+
+    if (val) {
+      const [y, m] =
+        val
+          .split("-")
+          .map(Number);
+
+      const payload =
+        await api(
+          `/api/schedule/${y}/${m}`
+        );
+
+      renderSchedule(
+        payload
+      );
+    }
+  } catch (e) {
+    /*
+     * Графика может ещё не быть.
+     * Это нормально.
+     */
+
+    console.log(
+      "Графика ещё нет:",
+      e.message
+    );
+  }
+
+  renderBookings();
+}
+
+
+/* =========================================================
    HELPERS
 ========================================================= */
 
-function toast(msg, isError = false) {
+function toast(
+  msg,
+  isError = false
+) {
   if (tg?.showAlert) {
     tg.showAlert(msg);
     return;
@@ -109,36 +654,63 @@ function toast(msg, isError = false) {
   alert(msg);
 }
 
+
 function escapeHtml(s) {
   return String(s ?? "")
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;");
+    .replaceAll(
+      "&",
+      "&amp;"
+    )
+    .replaceAll(
+      "<",
+      "&lt;"
+    )
+    .replaceAll(
+      ">",
+      "&gt;"
+    )
+    .replaceAll(
+      '"',
+      "&quot;"
+    );
 }
 
-function fmtDate(iso) {
-  if (!iso) return "";
 
-  const [y, m, d] = iso.split("-");
+function fmtDate(iso) {
+  if (!iso) {
+    return "";
+  }
+
+  const [
+    y,
+    m,
+    d,
+  ] = iso.split("-");
 
   return `${d}.${m}.${y}`;
 }
 
+
 function saveLocalState() {
   localStorage.setItem(
     "demandTemplates",
-    JSON.stringify(state.demandTemplates)
+    JSON.stringify(
+      state.demandTemplates
+    )
   );
 
   localStorage.setItem(
     "demandOverrides",
-    JSON.stringify(state.demandOverrides)
+    JSON.stringify(
+      state.demandOverrides
+    )
   );
 
   localStorage.setItem(
     "bookings",
-    JSON.stringify(state.bookings)
+    JSON.stringify(
+      state.bookings
+    )
   );
 }
 
@@ -147,26 +719,75 @@ function saveLocalState() {
    TABS
 ========================================================= */
 
-$$(".tab").forEach((btn) => {
-  btn.addEventListener("click", () => {
-    switchTab(btn.dataset.tab);
-  });
-});
+$$(".tab").forEach(
+  (btn) => {
+    btn.addEventListener(
+      "click",
+      () => {
+        /*
+         * Защита frontend:
+         * нельзя вручную открыть
+         * запрещённую вкладку.
+         */
+
+        const role =
+          state.auth.account?.role;
+
+        const isAdmin =
+          role === "admin";
+
+        const allowedTabs =
+          isAdmin
+            ? [
+                "people",
+                "vacations",
+                "demand",
+                "schedule",
+                "bookings",
+              ]
+            : [
+                "vacations",
+                "schedule",
+                "bookings",
+              ];
+
+        if (
+          !allowedTabs.includes(
+            btn.dataset.tab
+          )
+        ) {
+          return;
+        }
+
+        switchTab(
+          btn.dataset.tab
+        );
+      }
+    );
+  }
+);
+
 
 function switchTab(tabName) {
-  $$(".tab").forEach((b) => {
-    b.classList.toggle(
-      "active",
-      b.dataset.tab === tabName
-    );
-  });
+  $$(".tab").forEach(
+    (b) => {
+      b.classList.toggle(
+        "active",
+        b.dataset.tab ===
+          tabName
+      );
+    }
+  );
 
-  $$(".panel").forEach((p) => {
-    p.classList.toggle(
-      "active",
-      p.id === `panel-${tabName}`
-    );
-  });
+  $$(".panel").forEach(
+    (p) => {
+      p.classList.toggle(
+        "active",
+        p.id ===
+          `panel-${tabName}`
+      );
+    }
+  );
 }
 
 
@@ -175,134 +796,223 @@ function switchTab(tabName) {
 ========================================================= */
 
 function patternLabel(emp) {
-  const t = emp.schedule_type;
+  const t =
+    emp.schedule_type;
 
-  if (t === "2/2" || t === "3/3") {
+  if (
+    t === "2/2" ||
+    t === "3/3"
+  ) {
     const time =
-      emp.time_start || emp.time_end
-        ? ` · ${emp.time_start || "?"}${emp.time_end ? "–" + emp.time_end : ""
-        }`
+      emp.time_start ||
+      emp.time_end
+        ? ` · ${
+            emp.time_start ||
+            "?"
+          }${
+            emp.time_end
+              ? "–" +
+                emp.time_end
+              : ""
+          }`
         : "";
 
-    return `${t} с ${emp.cycle_start || "?"}${time}`;
+    return `${t} с ${
+      emp.cycle_start ||
+      "?"
+    }${time}`;
   }
 
-  if (t === "weekdays") {
-    if (emp.day_slots?.length) {
+  if (
+    t === "weekdays"
+  ) {
+    if (
+      emp.day_slots?.length
+    ) {
       return emp.day_slots
         .map((s) => {
           const time =
-            s.time_start || s.time_end
-              ? ` ${s.time_start || "?"}${s.time_end ? "–" + s.time_end : ""
-              }`
+            s.time_start ||
+            s.time_end
+              ? ` ${
+                  s.time_start ||
+                  "?"
+                }${
+                  s.time_end
+                    ? "–" +
+                      s.time_end
+                    : ""
+                }`
               : "";
 
-          return `${WEEKDAY_NAMES[s.weekday]}${time}`;
+          return `${
+            WEEKDAY_NAMES[
+              s.weekday
+            ]
+          }${time}`;
         })
         .join(", ");
     }
 
-    return `дни: ${(emp.weekdays || [])
-      .map((d) => WEEKDAY_NAMES[d])
-      .join(", ")}`;
+    return `дни: ${
+      (emp.weekdays || [])
+        .map(
+          (d) =>
+            WEEKDAY_NAMES[d]
+        )
+        .join(", ")
+    }`;
   }
 
   if (t === "5/2") {
     const time =
-      emp.time_start || emp.time_end
-        ? ` · ${emp.time_start || "?"}${emp.time_end ? "–" + emp.time_end : ""
-        }`
+      emp.time_start ||
+      emp.time_end
+        ? ` · ${
+            emp.time_start ||
+            "?"
+          }${
+            emp.time_end
+              ? "–" +
+                emp.time_end
+              : ""
+          }`
         : "";
 
     return `5/2 (пн–пт)${time}`;
   }
 
-  return t || "График не настроен";
+  return (
+    t ||
+    "График не настроен"
+  );
 }
 
 
-function slotOptions(selected) {
+function slotOptions(
+  selected
+) {
   return WEEKDAY_NAMES.map(
     (name, idx) =>
-      `<option value="${idx}" ${Number(selected) === idx ? "selected" : ""
+      `<option value="${idx}" ${
+        Number(selected) === idx
+          ? "selected"
+          : ""
       }>${name}</option>`
   ).join("");
 }
 
 
-function renderDaySlots(slots = []) {
-  const list = $("#day-slots");
+function renderDaySlots(
+  slots = []
+) {
+  const list =
+    $("#day-slots");
 
-  const rows = slots.length
-    ? slots
-    : [
-      {
-        weekday: 1,
-        time_start: "12:00",
-        time_end: "01:00",
-      },
-    ];
+  const rows =
+    slots.length
+      ? slots
+      : [
+          {
+            weekday: 1,
+            time_start:
+              "12:00",
+            time_end:
+              "01:00",
+          },
+        ];
 
-  list.innerHTML = rows
-    .map(
-      (slot, idx) => `
-        <div class="slot-row" data-slot-idx="${idx}">
-          <label>
-            День
-            <select data-slot-weekday>
-              ${slotOptions(slot.weekday ?? 1)}
-            </select>
-          </label>
-
-          <label>
-            С
-            <input
-              type="time"
-              data-slot-start
-              value="${slot.time_start || ""}"
-            />
-          </label>
-
-          <label>
-            По
-            <input
-              type="time"
-              data-slot-end
-              value="${slot.time_end || ""}"
-            />
-          </label>
-
-          <button
-            type="button"
-            class="btn danger"
-            data-remove-slot
+  list.innerHTML =
+    rows
+      .map(
+        (slot, idx) => `
+          <div
+            class="slot-row"
+            data-slot-idx="${idx}"
           >
-            ✕
-          </button>
-        </div>
-      `
-    )
-    .join("");
+
+            <label>
+              День
+
+              <select
+                data-slot-weekday
+              >
+                ${slotOptions(
+                  slot.weekday ??
+                    1
+                )}
+              </select>
+            </label>
+
+            <label>
+              С
+
+              <input
+                type="time"
+                data-slot-start
+                value="${
+                  slot.time_start ||
+                  ""
+                }"
+              />
+            </label>
+
+            <label>
+              По
+
+              <input
+                type="time"
+                data-slot-end
+                value="${
+                  slot.time_end ||
+                  ""
+                }"
+              />
+            </label>
+
+            <button
+              type="button"
+              class="btn danger"
+              data-remove-slot
+            >
+              ✕
+            </button>
+
+          </div>
+        `
+      )
+      .join("");
 }
 
 
 function collectDaySlots() {
-  return $$("#day-slots .slot-row").map((row) => ({
-    weekday: Number(
-      row.querySelector("[data-slot-weekday]").value
-    ),
+  return $$("#day-slots .slot-row")
+    .map(
+      (row) => ({
+        weekday:
+          Number(
+            row.querySelector(
+              "[data-slot-weekday]"
+            ).value
+          ),
 
-    time_start:
-      row.querySelector("[data-slot-start]").value || "",
+        time_start:
+          row.querySelector(
+            "[data-slot-start]"
+          ).value || "",
 
-    time_end:
-      row.querySelector("[data-slot-end]").value || "",
-  }));
+        time_end:
+          row.querySelector(
+            "[data-slot-end]"
+          ).value || "",
+      })
+    );
 }
 
 
 function toggleTypeFields() {
-  const type = $("#emp-type").value;
+  const type =
+    $("#emp-type").value;
 
   const cycle =
     type === "2/2" ||
@@ -311,27 +1021,32 @@ function toggleTypeFields() {
   const weekdays =
     type === "weekdays";
 
-  $("#cycle-fields").classList.toggle(
-    "hidden",
-    !cycle
-  );
+  $("#cycle-fields")
+    .classList.toggle(
+      "hidden",
+      !cycle
+    );
 
-  $("#weekday-fields").classList.toggle(
-    "hidden",
-    !weekdays
-  );
+  $("#weekday-fields")
+    .classList.toggle(
+      "hidden",
+      !weekdays
+    );
 
-  $("#default-time-fields").classList.toggle(
-    "hidden",
-    weekdays
-  );
+  $("#default-time-fields")
+    .classList.toggle(
+      "hidden",
+      weekdays
+    );
 
-  $("#default-time-hint").classList.toggle(
-    "hidden",
-    weekdays
-  );
+  $("#default-time-hint")
+    .classList.toggle(
+      "hidden",
+      weekdays
+    );
 
-  $("#emp-cycle-start").required = cycle;
+  $("#emp-cycle-start")
+    .required = cycle;
 }
 
 
@@ -340,81 +1055,127 @@ function toggleTypeFields() {
 ========================================================= */
 
 async function loadAccounts() {
-  state.accounts = await api("/api/accounts");
+  state.accounts =
+    await api(
+      "/api/accounts"
+    );
 
   renderEmployees();
+
   fillVacEmpSelect();
 }
 
 
 function renderEmployees() {
-  const list = $("#emp-list");
+  const list =
+    $("#emp-list");
 
-  if (!state.accounts.length) {
+  if (
+    !state.accounts.length
+  ) {
     list.innerHTML = `
       <li class="empty">
-        В таблице accounts пока нет сотрудников
+        В таблице accounts пока
+        нет сотрудников
       </li>
     `;
 
     return;
   }
 
-  list.innerHTML = state.accounts
-    .map((account) => {
-      const configured = Boolean(account.configured);
+  list.innerHTML =
+    state.accounts
+      .map((account) => {
+        const configured =
+          Boolean(
+            account.configured
+          );
 
-      const badge = configured
-        ? `<span class="badge">Настроено</span>`
-        : `<span class="badge">Не настроено</span>`;
+        const badge =
+          configured
+            ? `<span class="badge">
+                Настроено
+              </span>`
+            : `<span class="badge">
+                Не настроено
+              </span>`;
 
-      const description = configured
-        ? patternLabel(account)
-        : "График ещё не настроен";
+        const description =
+          configured
+            ? patternLabel(
+                account
+              )
+            : "График ещё не настроен";
 
-      return `
-        <li class="card">
-          <div>
-            <h4>
-              ${escapeHtml(account.name || account.username)}
-              ${badge}
-            </h4>
+        return `
+          <li class="card">
 
-            <div class="meta">
-              ${escapeHtml(description)}
-              ${account.note
-          ? " · " + escapeHtml(account.note)
-          : ""
-        }
+            <div>
+
+              <h4>
+                ${escapeHtml(
+                  account.name ||
+                    account.username
+                )}
+
+                ${badge}
+              </h4>
+
+              <div class="meta">
+                ${escapeHtml(
+                  description
+                )}
+
+                ${
+                  account.note
+                    ? " · " +
+                      escapeHtml(
+                        account.note
+                      )
+                    : ""
+                }
+              </div>
+
             </div>
-          </div>
 
-          <div class="card-actions">
-            <button
-              type="button"
-              class="btn primary"
-              data-configure-account="${account.id}"
-            >
-              ${configured ? "Настроить" : "Настроить график"}
-            </button>
+            <div class="card-actions">
 
-            ${configured
-          ? `
-                  <button
-                    type="button"
-                    class="btn danger"
-                    data-del-emp="${account.id}"
-                  >
-                    Сбросить
-                  </button>
-                `
-          : ""
-        }
-          </div>
-        </li>
-      `;
-    })
-    .join("");
+              <button
+                type="button"
+                class="btn primary"
+                data-configure-account="${
+                  account.id
+                }"
+              >
+                ${
+                  configured
+                    ? "Настроить"
+                    : "Настроить график"
+                }
+              </button>
+
+              ${
+                configured
+                  ? `
+                    <button
+                      type="button"
+                      class="btn danger"
+                      data-del-emp="${
+                        account.id
+                      }"
+                    >
+                      Сбросить
+                    </button>
+                  `
+                  : ""
+              }
+
+            </div>
+
+          </li>
+        `;
+      })
+      .join("");
 }
 
 
@@ -422,34 +1183,44 @@ function renderEmployees() {
    EMPLOYEE MODAL
 ========================================================= */
 
-function openEmpModal(account) {
-  state.editingEmpId = account.id;
+function openEmpModal(
+  account
+) {
+  state.editingEmpId =
+    account.id;
 
-  $("#emp-modal-title").textContent =
+  $("#emp-modal-title")
+    .textContent =
     account.configured
       ? "Настройка графика"
       : "Настроить график";
 
-  $("#emp-id").value = account.id;
+  $("#emp-id").value =
+    account.id;
 
-  // Имя теперь только для отображения.
-  // Редактировать имя accounts здесь нельзя.
   $("#emp-name").value =
-    account.name || account.username || "";
+    account.name ||
+    account.username ||
+    "";
 
-  $("#emp-name").readOnly = true;
+  $("#emp-name").readOnly =
+    true;
 
   $("#emp-type").value =
-    account.schedule_type || "3/3";
+    account.schedule_type ||
+    "3/3";
 
   $("#emp-cycle-start").value =
-    account.cycle_start || "";
+    account.cycle_start ||
+    "";
 
   $("#emp-time-start").value =
-    account.time_start || "";
+    account.time_start ||
+    "";
 
   $("#emp-time-end").value =
-    account.time_end || "";
+    account.time_end ||
+    "";
 
   $("#emp-note").value =
     account.note || "";
@@ -457,13 +1228,22 @@ function openEmpModal(account) {
   const slots =
     account.day_slots?.length
       ? account.day_slots
-      : (account.weekdays || []).map((d) => ({
-        weekday: d,
-        time_start: account.time_start || "",
-        time_end: account.time_end || "",
-      }));
+      : (
+          account.weekdays ||
+          []
+        ).map((d) => ({
+          weekday: d,
+          time_start:
+            account.time_start ||
+            "",
+          time_end:
+            account.time_end ||
+            "",
+        }));
 
-  renderDaySlots(slots);
+  renderDaySlots(
+    slots
+  );
 
   toggleTypeFields();
 
@@ -479,22 +1259,28 @@ $("#emp-type").addEventListener(
 
 $("#emp-cancel").addEventListener(
   "click",
-  () => $("#emp-modal").close()
+  () =>
+    $("#emp-modal").close()
 );
 
 
 $("#btn-add-slot").addEventListener(
   "click",
   () => {
-    const slots = collectDaySlots();
+    const slots =
+      collectDaySlots();
 
     slots.push({
       weekday: 4,
-      time_start: "20:00",
-      time_end: "01:00",
+      time_start:
+        "20:00",
+      time_end:
+        "01:00",
     });
 
-    renderDaySlots(slots);
+    renderDaySlots(
+      slots
+    );
   }
 );
 
@@ -503,19 +1289,33 @@ $("#day-slots").addEventListener(
   "click",
   (ev) => {
     const btn =
-      ev.target.closest("[data-remove-slot]");
+      ev.target.closest(
+        "[data-remove-slot]"
+      );
 
-    if (!btn) return;
+    if (!btn) {
+      return;
+    }
 
-    const slots = collectDaySlots();
+    const slots =
+      collectDaySlots();
 
-    const idx = Number(
-      btn.closest(".slot-row").dataset.slotIdx
+    const idx =
+      Number(
+        btn.closest(
+          ".slot-row"
+        ).dataset
+          .slotIdx
+      );
+
+    slots.splice(
+      idx,
+      1
     );
 
-    slots.splice(idx, 1);
-
-    renderDaySlots(slots);
+    renderDaySlots(
+      slots
+    );
   }
 );
 
@@ -526,7 +1326,9 @@ $("#emp-form").addEventListener(
     ev.preventDefault();
 
     const accountId =
-      Number($("#emp-id").value);
+      Number(
+        $("#emp-id").value
+      );
 
     const type =
       $("#emp-type").value;
@@ -537,48 +1339,69 @@ $("#emp-form").addEventListener(
         : [];
 
     const weekdays =
-      day_slots.map((s) => s.weekday);
+      day_slots.map(
+        (s) =>
+          s.weekday
+      );
 
     const body = {
-      account_id: accountId,
+      account_id:
+        accountId,
 
-      schedule_type: type,
+      schedule_type:
+        type,
 
       cycle_start:
-        $("#emp-cycle-start").value || null,
+        $("#emp-cycle-start")
+          .value || null,
 
       weekdays,
 
       day_slots,
 
       time_start:
-        $("#emp-time-start").value || "",
+        $("#emp-time-start")
+          .value || "",
 
       time_end:
-        $("#emp-time-end").value || "",
+        $("#emp-time-end")
+          .value || "",
 
       note:
-        $("#emp-note").value.trim(),
+        $("#emp-note")
+          .value
+          .trim(),
 
       active: true,
     };
 
     try {
-      await api("/api/employees", {
-        method: "POST",
-        body: JSON.stringify(body),
-      });
+      await api(
+        "/api/employees",
+        {
+          method: "POST",
+
+          body:
+            JSON.stringify(
+              body
+            ),
+        }
+      );
 
       $("#emp-modal").close();
 
       await loadAccounts();
 
-      toast("График сохранён");
+      toast(
+        "График сохранён"
+      );
 
       await rebuildAndShowSchedule();
-
     } catch (e) {
-      toast(e.message, true);
+      toast(
+        e.message,
+        true
+      );
     }
   }
 );
@@ -603,15 +1426,22 @@ $("#emp-list").addEventListener(
 
     if (configure) {
       const id =
-        Number(configure.dataset.configureAccount);
+        Number(
+          configure.dataset
+            .configureAccount
+        );
 
       const account =
         state.accounts.find(
-          (a) => Number(a.id) === id
+          (a) =>
+            Number(a.id) ===
+            id
         );
 
       if (account) {
-        openEmpModal(account);
+        openEmpModal(
+          account
+        );
       }
 
       return;
@@ -619,58 +1449,84 @@ $("#emp-list").addEventListener(
 
     if (deleteBtn) {
       const id =
-        Number(deleteBtn.dataset.delEmp);
+        Number(
+          deleteBtn.dataset
+            .delEmp
+        );
 
       const account =
         state.accounts.find(
-          (a) => Number(a.id) === id
+          (a) =>
+            Number(a.id) ===
+            id
         );
 
-      if (!account) return;
+      if (!account) {
+        return;
+      }
 
+      const confirmed =
+        await showConfirmModal({
+          title:
+            "Сбросить график?",
 
-      const confirmed = await showConfirmModal({
-        title: "Сбросить график?",
-        text: "График сотрудника будет удалён, но сам аккаунт останется в системе.",
-        confirmText: "Сбросить",
-      });
+          text:
+            "График сотрудника будет удалён, но сам аккаунт останется в системе.",
+
+          confirmText:
+            "Сбросить",
+        });
 
       if (!confirmed) {
         return;
       }
 
-
       try {
-        await api(`/api/employees/${id}`, {
-          method: "DELETE",
-        });
+        await api(
+          `/api/employees/${id}`,
+          {
+            method: "DELETE",
+          }
+        );
 
         await loadAccounts();
+
         await loadVacations();
 
         if (state.schedule) {
-          await reloadCurrentSchedule(false);
+          await reloadCurrentSchedule(
+            false
+          );
         }
-
       } catch (e) {
-        toast(e.message, true);
+        toast(
+          e.message,
+          true
+        );
       }
     }
   }
 );
 
 
-$("#btn-refresh-accounts").addEventListener(
-  "click",
-  async () => {
-    try {
-      await loadAccounts();
-      toast("Список обновлён");
-    } catch (e) {
-      toast(e.message, true);
+$("#btn-refresh-accounts")
+  .addEventListener(
+    "click",
+    async () => {
+      try {
+        await loadAccounts();
+
+        toast(
+          "Список обновлён"
+        );
+      } catch (e) {
+        toast(
+          e.message,
+          true
+        );
+      }
     }
-  }
-);
+  );
 
 
 /* =========================================================
@@ -678,36 +1534,47 @@ $("#btn-refresh-accounts").addEventListener(
 ========================================================= */
 
 function fillVacEmpSelect() {
-  const sel = $("#vac-emp");
+  const sel =
+    $("#vac-emp");
 
   const configured =
     state.accounts.filter(
-      (a) => a.configured
+      (a) =>
+        a.configured
     );
 
-  sel.innerHTML = configured
-    .map(
-      (e) =>
-        `<option value="${e.id}">
-          ${escapeHtml(e.name || e.username)}
-        </option>`
-    )
-    .join("");
+  sel.innerHTML =
+    configured
+      .map(
+        (e) =>
+          `<option value="${e.id}">
+            ${escapeHtml(
+              e.name ||
+                e.username
+            )}
+          </option>`
+      )
+      .join("");
 }
 
 
 async function loadVacations() {
   state.vacations =
-    await api("/api/vacations");
+    await api(
+      "/api/vacations"
+    );
 
   renderVacations();
 }
 
 
 function renderVacations() {
-  const list = $("#vac-list");
+  const list =
+    $("#vac-list");
 
-  if (!state.vacations.length) {
+  if (
+    !state.vacations.length
+  ) {
     list.innerHTML = `
       <li class="empty">
         Отпусков пока нет
@@ -717,37 +1584,69 @@ function renderVacations() {
     return;
   }
 
+  const isAdmin =
+    state.auth.account?.role ===
+    "admin";
+
   list.innerHTML =
     state.vacations
       .map(
         (v) => `
           <li class="card">
+
             <div>
+
               <h4>
-                ${escapeHtml(v.emp_name)}
+                ${escapeHtml(
+                  v.emp_name
+                )}
               </h4>
 
               <div class="meta">
-                ${fmtDate(v.start_date)}
+
+                ${fmtDate(
+                  v.start_date
+                )}
+
                 —
-                ${fmtDate(v.end_date)}
-                ${v.comment
-            ? " · " +
-            escapeHtml(v.comment)
-            : ""
-          }
+
+                ${fmtDate(
+                  v.end_date
+                )}
+
+                ${
+                  v.comment
+                    ? " · " +
+                      escapeHtml(
+                        v.comment
+                      )
+                    : ""
+                }
+
               </div>
+
             </div>
 
-            <div class="card-actions">
-              <button
-                type="button"
-                class="btn danger"
-                data-del-vac="${v.id}"
-              >
-                🗑
-              </button>
-            </div>
+            ${
+              isAdmin
+                ? `
+                  <div class="card-actions">
+
+                    <button
+                      type="button"
+                      class="btn danger"
+                      data-del-vac="${
+                        v.id
+                      }"
+                    >
+                      🗑
+                    </button>
+
+                  </div>
+                `
+                : ""
+            }
+
           </li>
         `
       )
@@ -760,10 +1659,13 @@ $("#btn-add-vac").addEventListener(
   () => {
     const configured =
       state.accounts.filter(
-        (a) => a.configured
+        (a) =>
+          a.configured
       );
 
-    if (!configured.length) {
+    if (
+      !configured.length
+    ) {
       toast(
         "Сначала настройте график хотя бы одному сотруднику"
       );
@@ -773,18 +1675,25 @@ $("#btn-add-vac").addEventListener(
 
     fillVacEmpSelect();
 
-    $("#vac-start").value = "";
-    $("#vac-end").value = "";
-    $("#vac-comment").value = "";
+    $("#vac-start").value =
+      "";
 
-    $("#vac-modal").showModal();
+    $("#vac-end").value =
+      "";
+
+    $("#vac-comment").value =
+      "";
+
+    $("#vac-modal")
+      .showModal();
   }
 );
 
 
 $("#vac-cancel").addEventListener(
   "click",
-  () => $("#vac-modal").close()
+  () =>
+    $("#vac-modal").close()
 );
 
 
@@ -794,32 +1703,46 @@ $("#vac-form").addEventListener(
     ev.preventDefault();
 
     try {
-      await api("/api/vacations", {
-        method: "POST",
+      await api(
+        "/api/vacations",
+        {
+          method: "POST",
 
-        body: JSON.stringify({
-          emp_id:
-            Number($("#vac-emp").value),
+          body:
+            JSON.stringify({
+              emp_id:
+                Number(
+                  $("#vac-emp")
+                    .value
+                ),
 
-          start_date:
-            $("#vac-start").value,
+              start_date:
+                $("#vac-start")
+                  .value,
 
-          end_date:
-            $("#vac-end").value,
+              end_date:
+                $("#vac-end")
+                  .value,
 
-          comment:
-            $("#vac-comment").value.trim(),
-        }),
-      });
+              comment:
+                $("#vac-comment")
+                  .value
+                  .trim(),
+            }),
+        }
+      );
 
-      $("#vac-modal").close();
+      $("#vac-modal")
+        .close();
 
       await loadVacations();
 
       await rebuildAndShowSchedule();
-
     } catch (e) {
-      toast(e.message, true);
+      toast(
+        e.message,
+        true
+      );
     }
   }
 );
@@ -833,31 +1756,45 @@ $("#vac-list").addEventListener(
         "[data-del-vac]"
       );
 
-    if (!btn) return;
+    if (!btn) {
+      return;
+    }
 
-    const id = btn.dataset.delVac;
+    const id =
+      btn.dataset.delVac;
 
-const confirmed = await showConfirmModal({
-  title: "Удалить отпуск?",
-  text: "Запись об отпуске будет удалена.",
-  confirmText: "Удалить",
-});
+    const confirmed =
+      await showConfirmModal({
+        title:
+          "Удалить отпуск?",
 
-if (!confirmed) {
-  return;
-}
+        text:
+          "Запись об отпуске будет удалена.",
+
+        confirmText:
+          "Удалить",
+      });
+
+    if (!confirmed) {
+      return;
+    }
 
     try {
-      await api(`/api/vacations/${id}`, {
-        method: "DELETE",
-      });
+      await api(
+        `/api/vacations/${id}`,
+        {
+          method: "DELETE",
+        }
+      );
 
       await loadVacations();
 
       await rebuildAndShowSchedule();
-
     } catch (e) {
-      toast(e.message, true);
+      toast(
+        e.message,
+        true
+      );
     }
   }
 );
@@ -873,35 +1810,50 @@ function renderDemandTemplates() {
 
   grid.innerHTML =
     WEEKDAY_NAMES
-      .map((name, weekday) => {
-        const row =
-          state.demandTemplates.find(
-            (item) =>
-              Number(item.weekday) === weekday
-          ) || {
-            weekday,
-            required_people: 0,
-          };
+      .map(
+        (
+          name,
+          weekday
+        ) => {
+          const row =
+            state.demandTemplates.find(
+              (item) =>
+                Number(
+                  item.weekday
+                ) ===
+                weekday
+            ) || {
+              weekday,
+              required_people:
+                0,
+            };
 
-        return `
-          <div class="template-item">
-            <strong>${name}</strong>
+          return `
+            <div class="template-item">
 
-            <label>
-              Нужно людей
+              <strong>
+                ${name}
+              </strong>
 
-              <input
-                type="number"
-                min="0"
-                data-template-weekday="${weekday}"
-                value="${Number(
-          row.required_people || 0
-        )}"
-              />
-            </label>
-          </div>
-        `;
-      })
+              <label>
+                Нужно людей
+
+                <input
+                  type="number"
+                  min="0"
+                  data-template-weekday="${weekday}"
+                  value="${Number(
+                    row.required_people ||
+                      0
+                  )}"
+                />
+
+              </label>
+
+            </div>
+          `;
+        }
+      )
       .join("");
 }
 
@@ -910,7 +1862,10 @@ function renderDemandOverrides() {
   const list =
     $("#override-list");
 
-  if (!state.demandOverrides.length) {
+  if (
+    !state.demandOverrides
+      .length
+  ) {
     list.innerHTML = `
       <li class="empty">
         Исключений по датам пока нет
@@ -925,32 +1880,51 @@ function renderDemandOverrides() {
       .map(
         (item) => `
           <li class="card">
+
             <div>
+
               <h4>
-                ${fmtDate(item.date)}
+
+                ${fmtDate(
+                  item.date
+                )}
 
                 <span class="badge">
-                  ${item.required_people} чел.
+                  ${
+                    item.required_people
+                  } чел.
                 </span>
+
               </h4>
 
               <div class="meta">
-                ${item.comment
-            ? escapeHtml(item.comment)
-            : "Без комментария"
-          }
+
+                ${
+                  item.comment
+                    ? escapeHtml(
+                        item.comment
+                      )
+                    : "Без комментария"
+                }
+
               </div>
+
             </div>
 
             <div class="card-actions">
+
               <button
                 type="button"
                 class="btn danger"
-                data-del-override="${item.id}"
+                data-del-override="${
+                  item.id
+                }"
               >
                 🗑
               </button>
+
             </div>
+
           </li>
         `
       )
@@ -960,6 +1934,7 @@ function renderDemandOverrides() {
 
 function loadDemand() {
   renderDemandTemplates();
+
   renderDemandOverrides();
 }
 
@@ -968,18 +1943,26 @@ $("#btn-save-template").addEventListener(
   "click",
   async () => {
     const inputs =
-      $$("[data-template-weekday]");
+      $$(
+        "[data-template-weekday]"
+      );
 
     state.demandTemplates =
-      inputs.map((input) => ({
-        weekday:
-          Number(
-            input.dataset.templateWeekday
-          ),
+      inputs.map(
+        (input) => ({
+          weekday:
+            Number(
+              input.dataset
+                .templateWeekday
+            ),
 
-        required_people:
-          Number(input.value || 0),
-      }));
+          required_people:
+            Number(
+              input.value ||
+                0
+            ),
+        })
+      );
 
     saveLocalState();
 
@@ -995,18 +1978,25 @@ $("#btn-save-template").addEventListener(
 $("#btn-add-override").addEventListener(
   "click",
   () => {
-    $("#override-date").value = "";
-    $("#override-required").value = "0";
-    $("#override-comment").value = "";
+    $("#override-date").value =
+      "";
 
-    $("#override-modal").showModal();
+    $("#override-required")
+      .value = "0";
+
+    $("#override-comment")
+      .value = "";
+
+    $("#override-modal")
+      .showModal();
   }
 );
 
 
 $("#override-cancel").addEventListener(
   "click",
-  () => $("#override-modal").close()
+  () =>
+    $("#override-modal").close()
 );
 
 
@@ -1022,27 +2012,36 @@ $("#override-form").addEventListener(
           .slice(2)}`,
 
       date:
-        $("#override-date").value,
+        $("#override-date")
+          .value,
 
       required_people:
         Number(
-          $("#override-required").value || 0
+          $("#override-required")
+            .value || 0
         ),
 
       comment:
-        $("#override-comment").value.trim(),
+        $("#override-comment")
+          .value
+          .trim(),
     };
 
-    state.demandOverrides.push(item);
+    state.demandOverrides.push(
+      item
+    );
 
     state.demandOverrides.sort(
       (a, b) =>
-        a.date.localeCompare(b.date)
+        a.date.localeCompare(
+          b.date
+        )
     );
 
     saveLocalState();
 
-    $("#override-modal").close();
+    $("#override-modal")
+      .close();
 
     renderDemandOverrides();
 
@@ -1054,17 +2053,30 @@ $("#override-form").addEventListener(
 $("#override-list").addEventListener(
   "click",
   async (ev) => {
-    const btn = ev.target.closest("[data-del-override]");
+    const btn =
+      ev.target.closest(
+        "[data-del-override]"
+      );
 
-    if (!btn) return;
+    if (!btn) {
+      return;
+    }
 
-    const id = btn.dataset.delOverride;
+    const id =
+      btn.dataset
+        .delOverride;
 
-    const confirmed = await showConfirmModal({
-      title: "Удалить исключение?",
-      text: "Настройка потребности для этой даты будет удалена.",
-      confirmText: "Удалить",
-    });
+    const confirmed =
+      await showConfirmModal({
+        title:
+          "Удалить исключение?",
+
+        text:
+          "Настройка потребности для этой даты будет удалена.",
+
+        confirmText:
+          "Удалить",
+      });
 
     if (!confirmed) {
       return;
@@ -1073,7 +2085,8 @@ $("#override-list").addEventListener(
     state.demandOverrides =
       state.demandOverrides.filter(
         (item) =>
-          String(item.id) !== String(id)
+          String(item.id) !==
+          String(id)
       );
 
     saveLocalState();
@@ -1091,20 +2104,28 @@ $("#override-list").addEventListener(
 
 function getBookingUserName() {
   const current =
-    state.bookingUserName || "";
+    state.bookingUserName ||
+    "";
 
-  const input = prompt(
-    "Кто бронирует? Введите имя",
-    current
-  );
+  const input =
+    prompt(
+      "Кто бронирует? Введите имя",
+      current
+    );
 
-  if (!input) return "";
+  if (!input) {
+    return "";
+  }
 
-  const name = input.trim();
+  const name =
+    input.trim();
 
-  if (!name) return "";
+  if (!name) {
+    return "";
+  }
 
-  state.bookingUserName = name;
+  state.bookingUserName =
+    name;
 
   localStorage.setItem(
     "bookingUserName",
@@ -1115,19 +2136,27 @@ function getBookingUserName() {
 }
 
 
-function statusClass(status) {
-  return status === "booked"
+function statusClass(
+  status
+) {
+  return status ===
+    "booked"
     ? "booking-booked"
-    : status === "closed"
+    : status ===
+        "closed"
       ? "booking-closed"
       : "booking-needed";
 }
 
 
-function statusLabel(status) {
-  return status === "booked"
+function statusLabel(
+  status
+) {
+  return status ===
+    "booked"
     ? "Забронировано"
-    : status === "closed"
+    : status ===
+        "closed"
       ? "Закрыто"
       : "Нужно бронировать";
 }
@@ -1141,11 +2170,15 @@ function renderBookings() {
     [...state.bookings]
       .filter(
         (item) =>
-          Number(item.shortage) > 0
+          Number(
+            item.shortage
+          ) > 0
       )
       .sort(
         (a, b) =>
-          a.date.localeCompare(b.date)
+          a.date.localeCompare(
+            b.date
+          )
       );
 
   if (!items.length) {
@@ -1164,61 +2197,83 @@ function renderBookings() {
       .map(
         (item) => `
           <li class="card">
+
             <div>
+
               <h4>
-                ${fmtDate(item.date)}
+
+                ${fmtDate(
+                  item.date
+                )}
 
                 <span
                   class="booking-status ${statusClass(
-          item.status
-        )}"
+                    item.status
+                  )}"
                 >
                   ${statusLabel(
-          item.status
-        )}
+                    item.status
+                  )}
                 </span>
+
               </h4>
 
               <div class="meta">
+
                 Нужно:
-                ${item.required_people}
+                ${
+                  item.required_people
+                }
 
                 · Есть:
-                ${item.available_people}
+                ${
+                  item.available_people
+                }
 
                 ·
+
                 <span class="shortage">
-                  Мало на ${item.shortage}
+                  Мало на
+                  ${item.shortage}
                 </span>
+
               </div>
 
               <div class="meta">
-                ${item.booked_by
-            ? `Забронировал(а):
+
+                ${
+                  item.booked_by
+                    ? `Забронировал(а):
                        ${escapeHtml(
-              item.booked_by
-            )}`
-            : "Можно отметить, когда место забронировали"
-          }
+                         item.booked_by
+                       )}`
+                    : "Можно отметить, когда место забронировали"
+                }
+
               </div>
 
-              ${item.comment
-            ? `
+              ${
+                item.comment
+                  ? `
                     <div class="meta">
                       ${escapeHtml(
-              item.comment
-            )}
+                        item.comment
+                      )}
                     </div>
                   `
-            : ""
-          }
+                  : ""
+              }
+
             </div>
 
             <div class="card-actions">
+
               <button
                 type="button"
                 class="btn primary"
-                data-booking-status="${item.id}"
+                data-booking-status="${
+                  item.id
+                }"
                 data-status="booked"
               >
                 Бронь
@@ -1227,7 +2282,9 @@ function renderBookings() {
               <button
                 type="button"
                 class="btn"
-                data-booking-status="${item.id}"
+                data-booking-status="${
+                  item.id
+                }"
                 data-status="closed"
               >
                 Закрыто
@@ -1236,12 +2293,16 @@ function renderBookings() {
               <button
                 type="button"
                 class="btn danger"
-                data-booking-status="${item.id}"
+                data-booking-status="${
+                  item.id
+                }"
                 data-status="needed"
               >
                 Сброс
               </button>
+
             </div>
+
           </li>
         `
       )
@@ -1261,10 +2322,15 @@ function updateBooking(
         String(bookingId)
     );
 
-  if (!item) return;
+  if (!item) {
+    return;
+  }
 
-  item.status = status;
-  item.booked_by = bookedBy;
+  item.status =
+    status;
+
+  item.booked_by =
+    bookedBy;
 
   saveLocalState();
 
@@ -1280,13 +2346,17 @@ $("#booking-list").addEventListener(
         "[data-booking-status]"
       );
 
-    if (!button) return;
+    if (!button) {
+      return;
+    }
 
     const id =
-      button.dataset.bookingStatus;
+      button.dataset
+        .bookingStatus;
 
     const status =
-      button.dataset.status;
+      button.dataset
+        .status;
 
     const bookedBy =
       status === "booked"
@@ -1310,7 +2380,9 @@ $("#booking-list").addEventListener(
       bookedBy
     );
 
-    if (state.selectedDay) {
+    if (
+      state.selectedDay
+    ) {
       openDayView(
         state.selectedDay
       );
@@ -1328,15 +2400,18 @@ function setMonthPicker(
   month
 ) {
   $("#month-picker").value =
-    `${year}-${String(month).padStart(
-      2,
-      "0"
-    )}`;
+    `${year}-${String(
+      month
+    ).padStart(2, "0")}`;
 }
 
 
-function parseTimeMinutes(value) {
-  if (!value) return null;
+function parseTimeMinutes(
+  value
+) {
+  if (!value) {
+    return null;
+  }
 
   const match =
     String(value)
@@ -1345,16 +2420,21 @@ function parseTimeMinutes(value) {
         /^(\d{1,2}):(\d{2})$/
       );
 
-  if (!match) return null;
+  if (!match) {
+    return null;
+  }
 
   return (
-    Number(match[1]) * 60 +
+    Number(match[1]) *
+      60 +
     Number(match[2])
   );
 }
 
 
-function splitTimeRange(label) {
+function splitTimeRange(
+  label
+) {
   if (!label) {
     return {
       start: "",
@@ -1367,23 +2447,33 @@ function splitTimeRange(label) {
   const parts =
     String(label)
       .split(/[–-]/)
-      .map((x) => x.trim());
+      .map((x) =>
+        x.trim()
+      );
 
-  const start = parts[0] || "";
-  const end = parts[1] || "";
+  const start =
+    parts[0] || "";
+
+  const end =
+    parts[1] || "";
 
   let startMin =
-    parseTimeMinutes(start);
+    parseTimeMinutes(
+      start
+    );
 
   let endMin =
-    parseTimeMinutes(end);
+    parseTimeMinutes(
+      end
+    );
 
   if (
     startMin != null &&
     endMin != null &&
     endMin <= startMin
   ) {
-    endMin += 24 * 60;
+    endMin +=
+      24 * 60;
   }
 
   return {
@@ -1395,23 +2485,34 @@ function splitTimeRange(label) {
 }
 
 
-function peopleForDay(dateIso) {
-  if (!state.schedule) return [];
+function peopleForDay(
+  dateIso
+) {
+  if (!state.schedule) {
+    return [];
+  }
 
   const result = [];
 
   for (
-    const person
-    of state.schedule.people || []
+    const person of
+      state.schedule.people ||
+      []
   ) {
     const cell =
-      (person.cells || []).find(
-        (c) => c.date === dateIso
+      (
+        person.cells ||
+        []
+      ).find(
+        (c) =>
+          c.date ===
+          dateIso
       );
 
     if (
       !cell ||
-      cell.status !== "work"
+      cell.status !==
+        "work"
     ) {
       continue;
     }
@@ -1419,21 +2520,24 @@ function peopleForDay(dateIso) {
     const range =
       splitTimeRange(
         cell.time ||
-        person.time_label ||
-        ""
+          person.time_label ||
+          ""
       );
 
     result.push({
-      name: person.name,
+      name:
+        person.name,
 
       time:
         cell.time ||
         person.time_label ||
         "",
 
-      start: range.start,
+      start:
+        range.start,
 
-      end: range.end,
+      end:
+        range.end,
 
       startMin:
         range.startMin ??
@@ -1448,7 +2552,8 @@ function peopleForDay(dateIso) {
 
   result.sort(
     (a, b) =>
-      a.startMin - b.startMin ||
+      a.startMin -
+        b.startMin ||
       a.name.localeCompare(
         b.name,
         "ru"
@@ -1459,7 +2564,9 @@ function peopleForDay(dateIso) {
 }
 
 
-function buildHourTable(people) {
+function buildHourTable(
+  people
+) {
   const rows = [];
 
   for (
@@ -1471,7 +2578,8 @@ function buildHourTable(people) {
       hour * 60;
 
     const end =
-      (hour + 1) * 60;
+      (hour + 1) *
+      60;
 
     const active =
       people
@@ -1490,14 +2598,17 @@ function buildHourTable(people) {
         })
         .map(
           (p) =>
-            `${p.name}${p.time
-              ? ` (${p.time})`
-              : ""
+            `${p.name}${
+              p.time
+                ? ` (${p.time})`
+                : ""
             }`
         );
 
     const hourLabel =
-      `${String(hour).padStart(
+      `${String(
+        hour
+      ).padStart(
         2,
         "0"
       )}:00–${String(
@@ -1509,24 +2620,42 @@ function buildHourTable(people) {
 
     rows.push(`
       <tr>
-        <th>${hourLabel}</th>
+
+        <th>
+          ${hourLabel}
+        </th>
+
         <td>
-          ${active.length
-        ? active
-          .map(escapeHtml)
-          .join(", ")
-        : `<span class="hour-empty">—</span>`
-      }
+
+          ${
+            active.length
+              ? active
+                  .map(
+                    escapeHtml
+                  )
+                  .join(
+                    ", "
+                  )
+              : `<span class="hour-empty">
+                  —
+                </span>`
+          }
+
         </td>
+
       </tr>
     `);
   }
 
   return `
     <table class="day-hours">
+
       <tbody>
+
         ${rows.join("")}
+
       </tbody>
+
     </table>
   `;
 }
@@ -1541,13 +2670,15 @@ function showDaysView() {
     .classList
     .add("hidden");
 
-  state.selectedDay = null;
+  state.selectedDay =
+    null;
 
   $$(".month-day")
-    .forEach((el) =>
-      el.classList.remove(
-        "selected"
-      )
+    .forEach(
+      (el) =>
+        el.classList.remove(
+          "selected"
+        )
     );
 }
 
@@ -1563,7 +2694,9 @@ function syncBookingsFromSchedule(
     new Map(
       state.bookings.map(
         (b) => [
-          String(b.date),
+          String(
+            b.date
+          ),
           b,
         ]
       )
@@ -1572,13 +2705,19 @@ function syncBookingsFromSchedule(
   const next = [];
 
   for (
-    const day
-    of payload.by_day || []
+    const day of
+      payload.by_day ||
+      []
   ) {
     const shortage =
-      Number(day.shortage || 0);
+      Number(
+        day.shortage ||
+          0
+      );
 
-    if (shortage <= 0) {
+    if (
+      shortage <= 0
+    ) {
       continue;
     }
 
@@ -1592,16 +2731,19 @@ function syncBookingsFromSchedule(
         old?.id ||
         `booking-${day.date}`,
 
-      date: day.date,
+      date:
+        day.date,
 
       required_people:
         Number(
-          day.required_people || 0
+          day.required_people ||
+            0
         ),
 
       available_people:
         Number(
-          day.working_count || 0
+          day.working_count ||
+            0
         ),
 
       shortage,
@@ -1620,7 +2762,8 @@ function syncBookingsFromSchedule(
     });
   }
 
-  state.bookings = next;
+  state.bookings =
+    next;
 
   saveLocalState();
 
@@ -1632,19 +2775,30 @@ function syncBookingsFromSchedule(
    DAY VIEW
 ========================================================= */
 
-function openDayView(dateIso) {
-  if (!state.schedule) return;
+function openDayView(
+  dateIso
+) {
+  if (!state.schedule) {
+    return;
+  }
 
   const day =
-    (state.schedule.by_day || [])
-      .find(
-        (d) =>
-          d.date === dateIso
-      );
+    (
+      state.schedule
+        .by_day ||
+      []
+    ).find(
+      (d) =>
+        d.date ===
+        dateIso
+    );
 
-  if (!day) return;
+  if (!day) {
+    return;
+  }
 
-  state.selectedDay = dateIso;
+  state.selectedDay =
+    dateIso;
 
   $("#days-view")
     .classList
@@ -1654,23 +2808,38 @@ function openDayView(dateIso) {
     .classList
     .remove("hidden");
 
-  $("#day-view-title").textContent =
-    `${fmtDate(day.date)} · ${day.weekday_name}`;
+  $("#day-view-title")
+    .textContent =
+    `${fmtDate(
+      day.date
+    )} · ${
+      day.weekday_name
+    }`;
 
   const shortage =
-    Number(day.shortage || 0);
+    Number(
+      day.shortage ||
+        0
+    );
 
   const booking =
     state.bookings.find(
       (b) =>
-        b.date === day.date
+        b.date ===
+        day.date
     );
 
   const booked =
-    booking?.status === "booked";
+    booking?.status ===
+    "booked";
 
-  $("#day-view-meta").textContent =
-    `На смене: ${day.working_count} / нужно: ${day.required_people}` +
+  $("#day-view-meta")
+    .textContent =
+    `На смене: ${
+      day.working_count
+    } / нужно: ${
+      day.required_people
+    }` +
     (
       shortage > 0
         ? ` · мало на ${shortage}`
@@ -1678,140 +2847,174 @@ function openDayView(dateIso) {
     ) +
     (
       booked
-        ? ` · бронь: ${booking.booked_by ||
-        "указана"
-        }`
+        ? ` · бронь: ${
+            booking.booked_by ||
+            "указана"
+          }`
         : ""
     );
 
-  if (shortage > 0) {
-    $("#day-view-booking").innerHTML = `
-      <button
-        type="button"
-        class="btn ${booked ? "" : "primary"
-      }"
-        data-book-day="${booking?.id || ""}"
-        data-book-status="${booked ? "booked" : "needed"
-      }"
-      >
-        ${booked
-        ? "Снять бронь"
-        : "Забронировать этот день"
-      }
-      </button>
-    `;
+  if (
+    shortage > 0
+  ) {
+    $("#day-view-booking")
+      .innerHTML = `
+        <button
+          type="button"
+          class="btn ${
+            booked
+              ? ""
+              : "primary"
+          }"
+          data-book-day="${
+            booking?.id ||
+            ""
+          }"
+          data-book-status="${
+            booked
+              ? "booked"
+              : "needed"
+          }"
+        >
+          ${
+            booked
+              ? "Снять бронь"
+              : "Забронировать этот день"
+          }
+        </button>
+      `;
   } else {
-    $("#day-view-booking").innerHTML = `
-      <p
-        class="hint"
-        style="margin:0"
-      >
-        Людей хватает — бронировать не нужно
-      </p>
-    `;
+    $("#day-view-booking")
+      .innerHTML = `
+        <p
+          class="hint"
+          style="margin:0"
+        >
+          Людей хватает —
+          бронировать не нужно
+        </p>
+      `;
   }
 
   const people =
-    peopleForDay(dateIso);
+    peopleForDay(
+      dateIso
+    );
 
   if (!people.length) {
-    $("#day-view-axis").innerHTML = "";
-    $("#day-view-timeline").innerHTML = "";
-    $("#day-hours-wrap").innerHTML = "";
+    $("#day-view-axis")
+      .innerHTML = "";
 
-    $("#day-view-list").innerHTML = `
-      <div class="empty">
-        В этот день никто не работает
-      </div>
-    `;
+    $("#day-view-timeline")
+      .innerHTML = "";
+
+    $("#day-hours-wrap")
+      .innerHTML = "";
+
+    $("#day-view-list")
+      .innerHTML = `
+        <div class="empty">
+          В этот день никто
+          не работает
+        </div>
+      `;
 
     return;
   }
 
-  $("#day-view-axis").innerHTML = `
-    <span>00</span>
-    <span>04</span>
-    <span>08</span>
-    <span>12</span>
-    <span>16</span>
-    <span>20</span>
-    <span>24</span>
-  `;
+  $("#day-view-axis")
+    .innerHTML = `
+      <span>00</span>
+      <span>04</span>
+      <span>08</span>
+      <span>12</span>
+      <span>16</span>
+      <span>20</span>
+      <span>24</span>
+    `;
 
-  $("#day-view-timeline").innerHTML =
+  $("#day-view-timeline")
+    .innerHTML =
     people
-      .map((p, idx) => {
-        const start =
-          Math.max(
-            0,
-            Math.min(
-              p.startMin ?? 0,
-              24 * 60
-            )
-          );
+      .map(
+        (p, idx) => {
+          const start =
+            Math.max(
+              0,
+              Math.min(
+                p.startMin ??
+                  0,
+                24 * 60
+              )
+            );
 
-        const endRaw =
-          p.endMin ??
-          start + 60;
+          const endRaw =
+            p.endMin ??
+            start + 60;
 
-        const end =
-          Math.max(
-            start + 30,
-            Math.min(
-              endRaw,
-              24 * 60
-            )
-          );
+          const end =
+            Math.max(
+              start + 30,
+              Math.min(
+                endRaw,
+                24 * 60
+              )
+            );
 
-        const left =
-          (start /
-            (24 * 60)) *
-          100;
-
-        const width =
-          Math.max(
-            ((end - start) /
+          const left =
+            (start /
               (24 * 60)) *
-            100,
-            4
-          );
+            100;
 
-        const overnight =
-          (p.endMin ?? 0) >
-          24 * 60;
+          const width =
+            Math.max(
+              ((end -
+                start) /
+                (24 * 60)) *
+                100,
+              4
+            );
 
-        const label =
-          overnight
-            ? `${p.name} ${p.time} (до ночи+)`
-            : `${p.name} ${p.time}`;
+          const overnight =
+            (p.endMin ?? 0) >
+            24 * 60;
 
-        const top =
-          8 +
-          (idx % 2) * 28;
+          const label =
+            overnight
+              ? `${p.name} ${p.time} (до ночи+)`
+              : `${p.name} ${p.time}`;
 
-        return `
-          <div
-            class="timeline-bar"
-            style="
-              left:${left}%;
-              width:${width}%;
-              top:${top}px
-            "
-            title="${escapeHtml(
-          label
-        )}"
-          >
-            ${escapeHtml(
-          p.name
-        )}
-          </div>
-        `;
-      })
+          const top =
+            8 +
+            (idx % 2) *
+              28;
+
+          return `
+            <div
+              class="timeline-bar"
+              style="
+                left:${left}%;
+                width:${width}%;
+                top:${top}px
+              "
+              title="${escapeHtml(
+                label
+              )}"
+            >
+              ${escapeHtml(
+                p.name
+              )}
+            </div>
+          `;
+        }
+      )
       .join("");
 
   $("#day-hours-wrap")
     .innerHTML =
-    buildHourTable(people);
+    buildHourTable(
+      people
+    );
 
   $("#day-view-list")
     .innerHTML =
@@ -1819,29 +3022,35 @@ function openDayView(dateIso) {
       .map(
         (p) => `
           <div class="time-card">
+
             <div>
+
               <div class="who">
                 ${escapeHtml(
-          p.name
-        )}
+                  p.name
+                )}
               </div>
 
               <div class="meta">
-                ${p.time
-            ? "смена"
-            : "время не указано"
-          }
+                ${
+                  p.time
+                    ? "смена"
+                    : "время не указано"
+                }
               </div>
+
             </div>
 
             <div class="when">
-              ${p.time
-            ? escapeHtml(
-              p.time
-            )
-            : "—"
-          }
+              ${
+                p.time
+                  ? escapeHtml(
+                      p.time
+                    )
+                  : "—"
+              }
             </div>
+
           </div>
         `
       )
@@ -1866,17 +3075,22 @@ function renderMonthDays(
     $("#month-days-grid");
 
   grid.innerHTML =
-    (payload.by_day || [])
+    (
+      payload.by_day ||
+      []
+    )
       .map((d) => {
         const shortage =
           Number(
-            d.shortage || 0
+            d.shortage ||
+              0
           );
 
         const booking =
           state.bookings.find(
             (b) =>
-              b.date === d.date
+              b.date ===
+              d.date
           );
 
         const booked =
@@ -1885,14 +3099,17 @@ function renderMonthDays(
 
         const cls = [
           "month-day",
+
           shortage > 0
             ? "has-shortage"
             : "",
+
           booked
             ? "is-booked"
             : "",
+
           state.selectedDay ===
-            d.date
+          d.date
             ? "selected"
             : "",
         ]
@@ -1905,6 +3122,7 @@ function renderMonthDays(
             class="${cls}"
             data-open-day="${d.date}"
           >
+
             <div class="day-num">
               ${d.day}
             </div>
@@ -1918,13 +3136,15 @@ function renderMonthDays(
             </div>
 
             <div class="meta">
-              ${booked
-            ? "бронь"
-            : shortage > 0
-              ? `мало −${shortage}`
-              : "открыть"
-          }
+              ${
+                booked
+                  ? "бронь"
+                  : shortage > 0
+                    ? `мало −${shortage}`
+                    : "открыть"
+              }
             </div>
+
           </button>
         `;
       })
@@ -1947,17 +3167,23 @@ function renderSchedule(
     payload.month
   );
 
-  $("#schedule-meta").textContent =
-    `Собрано: ${payload.generated_at
-    } · людей: ${payload.people.length
-    } · дней с дефицитом: ${payload.summary
-      ?.days_with_shortage ??
-    0
+  $("#schedule-meta")
+    .textContent =
+    `Собрано: ${
+      payload.generated_at
+    } · людей: ${
+      payload.people.length
+    } · дней с дефицитом: ${
+      payload.summary
+        ?.days_with_shortage ??
+      0
     }`;
 
   $("#btn-xlsx").href =
-    `/api/schedule/${payload.year
-    }/${payload.month
+    `/api/schedule/${
+      payload.year
+    }/${
+      payload.month
     }/xlsx`;
 
   syncBookingsFromSchedule(
@@ -1970,11 +3196,15 @@ function renderSchedule(
 
   const byDate =
     Object.fromEntries(
-      (payload.by_day || [])
-        .map((d) => [
+      (
+        payload.by_day ||
+        []
+      ).map(
+        (d) => [
           d.date,
           d,
-        ])
+        ]
+      )
     );
 
   const headDays =
@@ -1986,7 +3216,8 @@ function renderSchedule(
 
         const shortage =
           Number(
-            info.shortage || 0
+            info.shortage ||
+              0
           );
 
         const booking =
@@ -2006,11 +3237,12 @@ function renderSchedule(
               <div
                 class="th-book-mark"
               >
-                ${booked
-              ? "бронь"
-              : "−" +
-              shortage
-            }
+                ${
+                  booked
+                    ? "бронь"
+                    : "−" +
+                      shortage
+                }
               </div>
             `
             : "";
@@ -2021,6 +3253,7 @@ function renderSchedule(
             class="clickable-day"
             title="Открыть день"
           >
+
             <div>
               ${d.day}
             </div>
@@ -2032,6 +3265,7 @@ function renderSchedule(
             </div>
 
             ${mark}
+
           </th>
         `;
       })
@@ -2050,7 +3284,7 @@ function renderSchedule(
               const shortage =
                 Number(
                   info.shortage ||
-                  0
+                    0
                 );
 
               const booking =
@@ -2066,22 +3300,24 @@ function renderSchedule(
 
               let cls =
                 c.status ===
-                  "work"
+                "work"
                   ? "cell-work"
                   : c.status ===
-                    "vacation"
+                      "vacation"
                     ? "cell-vacation"
                     : "cell-off";
 
               if (
                 shortage > 0
               ) {
-                cls += booked
-                  ? " cell-day-booked"
-                  : " cell-day-shortage";
+                cls +=
+                  booked
+                    ? " cell-day-booked"
+                    : " cell-day-shortage";
               }
 
-              let mark = "·";
+              let mark =
+                "·";
 
               if (
                 c.status ===
@@ -2095,8 +3331,8 @@ function renderSchedule(
                 mark =
                   c.time
                     ? `<span class="cell-time">${escapeHtml(
-                      c.time
-                    )}</span>`
+                        c.time
+                      )}</span>`
                     : "●";
               }
 
@@ -2114,29 +3350,43 @@ function renderSchedule(
 
         return `
           <tr>
+
             <td>
+
               <strong>
                 ${escapeHtml(
-          p.name
-        )}
+                  p.name
+                )}
               </strong>
 
               <br/>
 
               <span class="meta">
+
                 ${escapeHtml(
-          patternLabel(p)
-        )}
+                  patternLabel(
+                    p
+                  )
+                )}
+
                 ·
+
                 р${p.stats.work}
+
                 /
+
                 о${p.stats.off}
+
                 /
+
                 отп${p.stats.vacation}
+
               </span>
+
             </td>
 
             ${cells}
+
           </tr>
         `;
       })
@@ -2145,31 +3395,44 @@ function renderSchedule(
   $("#schedule-table")
     .innerHTML = `
       <table class="schedule">
+
         <thead>
+
           <tr>
+
             <th>
               Сотрудник
             </th>
 
             ${headDays}
+
           </tr>
+
         </thead>
 
         <tbody>
-          ${body ||
-    `
+
+          ${
+            body ||
+            `
               <tr>
+
                 <td
-                  colspan="${payload.days.length + 1
-    }"
+                  colspan="${
+                    payload.days.length +
+                    1
+                  }"
                   class="empty"
                 >
                   Нет сотрудников
                 </td>
+
               </tr>
             `
-    }
+          }
+
         </tbody>
+
       </table>
     `;
 
@@ -2224,7 +3487,7 @@ $("#panel-schedule")
 
         const next =
           booking.status ===
-            "booked"
+          "booked"
             ? "needed"
             : "booked";
 
@@ -2234,7 +3497,8 @@ $("#panel-schedule")
             : "";
 
         if (
-          next === "booked" &&
+          next ===
+            "booked" &&
           !bookedBy
         ) {
           toast(
@@ -2279,6 +3543,24 @@ $("#panel-schedule")
 async function generate(
   opts
 ) {
+  /*
+   * Генерация разрешена
+   * только admin.
+   */
+
+  const isAdmin =
+    state.auth.account?.role ===
+    "admin";
+
+  if (!isAdmin) {
+    toast(
+      "Только администратор может генерировать расписание",
+      true
+    );
+
+    return;
+  }
+
   try {
     const payload =
       await api(
@@ -2286,9 +3568,10 @@ async function generate(
         {
           method: "POST",
 
-          body: JSON.stringify(
-            opts
-          ),
+          body:
+            JSON.stringify(
+              opts
+            ),
         }
       );
 
@@ -2299,7 +3582,6 @@ async function generate(
     switchTab(
       "schedule"
     );
-
   } catch (e) {
     toast(
       e.message,
@@ -2308,45 +3590,114 @@ async function generate(
   }
 }
 
+
+/* =========================================================
+   CONFIRM MODAL
+========================================================= */
+
 function showConfirmModal({
-  title = "Подтверждение",
+  title =
+    "Подтверждение",
+
   text = "",
-  confirmText = "Подтвердить",
+
+  confirmText =
+    "Подтвердить",
+
   danger = true,
 }) {
-  return new Promise((resolve) => {
-    const modal = $("#confirm-modal");
-    const titleEl = $("#confirm-title");
-    const textEl = $("#confirm-text");
-    const okBtn = $("#confirm-ok");
-    const cancelBtn = $("#confirm-cancel");
+  return new Promise(
+    (resolve) => {
+      const modal =
+        $("#confirm-modal");
 
-    titleEl.textContent = title;
-    textEl.textContent = text;
-    okBtn.textContent = confirmText;
+      const titleEl =
+        $("#confirm-title");
 
-    okBtn.classList.toggle("btn-danger", danger);
+      const textEl =
+        $("#confirm-text");
 
-    modal.classList.remove("hidden");
+      const okBtn =
+        $("#confirm-ok");
 
-    const close = (result) => {
-      modal.classList.add("hidden");
+      const cancelBtn =
+        $("#confirm-cancel");
 
-      okBtn.removeEventListener("click", onOk);
-      cancelBtn.removeEventListener("click", onCancel);
+      titleEl.textContent =
+        title;
 
-      resolve(result);
-    };
+      textEl.textContent =
+        text;
 
-    const onOk = () => close(true);
-    const onCancel = () => close(false);
+      okBtn.textContent =
+        confirmText;
 
-    okBtn.addEventListener("click", onOk);
-    cancelBtn.addEventListener("click", onCancel);
-  });
+      okBtn.classList.toggle(
+        "btn-danger",
+        danger
+      );
+
+      modal.classList.remove(
+        "hidden"
+      );
+
+      const close =
+        (result) => {
+          modal.classList.add(
+            "hidden"
+          );
+
+          okBtn.removeEventListener(
+            "click",
+            onOk
+          );
+
+          cancelBtn.removeEventListener(
+            "click",
+            onCancel
+          );
+
+          resolve(result);
+        };
+
+      const onOk =
+        () => close(true);
+
+      const onCancel =
+        () => close(false);
+
+      okBtn.addEventListener(
+        "click",
+        onOk
+      );
+
+      cancelBtn.addEventListener(
+        "click",
+        onCancel
+      );
+    }
+  );
 }
 
+
+/* =========================================================
+   REBUILD SCHEDULE
+========================================================= */
+
 async function rebuildAndShowSchedule() {
+  /*
+   * Эта функция нужна только admin,
+   * потому что она вызывает generation.
+   */
+
+  const isAdmin =
+    state.auth.account?.role ===
+    "admin";
+
+  if (!isAdmin) {
+    return;
+  }
+
   const val =
     $("#month-picker")?.value;
 
@@ -2357,8 +3708,11 @@ async function rebuildAndShowSchedule() {
         .map(Number);
 
     await generate({
-      next_month: false,
+      next_month:
+        false,
+
       year: y,
+
       month: m,
     });
 
@@ -2366,7 +3720,8 @@ async function rebuildAndShowSchedule() {
   }
 
   await generate({
-    next_month: true,
+    next_month:
+      true,
   });
 }
 
@@ -2374,6 +3729,45 @@ async function rebuildAndShowSchedule() {
 async function reloadCurrentSchedule(
   switchToSchedule = true
 ) {
+  /*
+   * Перегенерация нужна только admin.
+   */
+
+  const isAdmin =
+    state.auth.account?.role ===
+    "admin";
+
+  if (!isAdmin) {
+    /*
+     * Для user просто
+     * перечитываем существующий
+     * график.
+     */
+
+    if (!state.schedule) {
+      return;
+    }
+
+    const payload =
+      await api(
+        `/api/schedule/${state.schedule.year}/${state.schedule.month}`
+      );
+
+    renderSchedule(
+      payload
+    );
+
+    if (
+      switchToSchedule
+    ) {
+      switchTab(
+        "schedule"
+      );
+    }
+
+    return;
+  }
+
   if (!state.schedule) {
     return;
   }
@@ -2384,15 +3778,19 @@ async function reloadCurrentSchedule(
       {
         method: "POST",
 
-        body: JSON.stringify({
-          next_month: false,
+        body:
+          JSON.stringify({
+            next_month:
+              false,
 
-          year:
-            state.schedule.year,
+            year:
+              state.schedule
+                .year,
 
-          month:
-            state.schedule.month,
-        }),
+            month:
+              state.schedule
+                .month,
+          }),
       }
     );
 
@@ -2400,7 +3798,9 @@ async function reloadCurrentSchedule(
     payload
   );
 
-  if (switchToSchedule) {
+  if (
+    switchToSchedule
+  ) {
     switchTab(
       "schedule"
     );
@@ -2419,12 +3819,17 @@ async function refreshScheduleIfLoaded() {
 }
 
 
+/* =========================================================
+   GENERATION BUTTONS
+========================================================= */
+
 $("#btn-gen-next")
   .addEventListener(
     "click",
     () =>
       generate({
-        next_month: true,
+        next_month:
+          true,
       })
   );
 
@@ -2437,17 +3842,23 @@ $("#btn-gen-current")
         new Date();
 
       generate({
-        next_month: false,
+        next_month:
+          false,
 
         year:
           now.getFullYear(),
 
         month:
-          now.getMonth() + 1,
+          now.getMonth() +
+          1,
       });
     }
   );
 
+
+/* =========================================================
+   MONTH PICKER
+========================================================= */
 
 $("#month-picker")
   .addEventListener(
@@ -2457,33 +3868,66 @@ $("#month-picker")
         $("#month-picker")
           .value;
 
-      if (!val) return;
+      if (!val) {
+        return;
+      }
 
       const [y, m] =
         val
           .split("-")
           .map(Number);
 
+      const isAdmin =
+        state.auth.account
+          ?.role ===
+        "admin";
+
       try {
+        /*
+         * ADMIN:
+         * генерируем выбранный месяц.
+         */
+
+        if (isAdmin) {
+          const payload =
+            await api(
+              "/api/schedule/generate",
+              {
+                method: "POST",
+
+                body:
+                  JSON.stringify({
+                    next_month:
+                      false,
+
+                    year: y,
+
+                    month: m,
+                  }),
+              }
+            );
+
+          renderSchedule(
+            payload
+          );
+
+          return;
+        }
+
+        /*
+         * USER:
+         * только смотрим существующий
+         * график.
+         */
+
         const payload =
           await api(
-            "/api/schedule/generate",
-            {
-              method: "POST",
-
-              body:
-                JSON.stringify({
-                  next_month: false,
-                  year: y,
-                  month: m,
-                }),
-            }
+            `/api/schedule/${y}/${m}`
           );
 
         renderSchedule(
           payload
         );
-
       } catch (e) {
         toast(
           e.message,
@@ -2495,7 +3939,7 @@ $("#month-picker")
 
 
 /* =========================================================
-   INIT
+   INIT MONTH PICKER
 ========================================================= */
 
 function initMonthPicker() {
@@ -2520,46 +3964,46 @@ function initMonthPicker() {
 }
 
 
+/* =========================================================
+   INIT
+========================================================= */
+
 (async function init() {
   try {
-    initMonthPicker();
+    /*
+     * Сначала проверяем авторизацию.
+     *
+     * Если Telegram:
+     * сервер проверит tg.initData.
+     *
+     * Если браузер:
+     * сервер проверит session cookie.
+     */
 
-    await loadAccounts();
+    const authenticated =
+      await checkAuth();
 
-    await loadVacations();
-
-    loadDemand();
-
-    try {
-      const val =
-        $("#month-picker")
-          .value;
-
-      const [y, m] =
-        val
-          .split("-")
-          .map(Number);
-
-      const payload =
-        await api(
-          `/api/schedule/${y}/${m}`
-        );
-
-      renderSchedule(
-        payload
-      );
-    } catch (_) {
-      // Графика ещё нет — это нормально.
+    if (!authenticated) {
+      return;
     }
 
-    renderBookings();
+    /*
+     * Только после авторизации
+     * загружаем приложение.
+     */
 
+    await initAuthorizedApp();
   } catch (e) {
-    console.error(e);
+    console.error(
+      "Init error:",
+      e
+    );
 
-    toast(
-      `Ошибка загрузки: ${e.message}`,
-      true
+    showLogin();
+
+    showAuthError(
+      e.message ||
+        "Ошибка авторизации"
     );
   }
 })();
