@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 
 from dotenv import load_dotenv
+
 from telegram import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
@@ -46,23 +47,29 @@ WEBAPP_URL = os.getenv(
 
 TOKEN = os.getenv(
     "BOT_TOKEN",
-    ""
+    "",
 ).strip()
+
+
+# Telegram ID администраторов
+ADMIN_USERS = {
+    1372024721,
+    706085105,
+    277922602,
+}
+
+
+def is_admin(tg_id: int) -> bool:
+    """Проверяет, является ли Telegram-пользователь администратором."""
+    return tg_id in ADMIN_USERS
 
 
 async def start(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ) -> None:
-
     text = (
         "🗓 *Планировщик смен*\n\n"
-        "В WebApp можно:\n"
-        "• добавить всех сотрудников "
-        "(3/3, 2/2, дни недели)\n"
-        "• указать отпуска\n"
-        "• собрать график "
-        "на следующий месяц\n\n"
         f"Ссылка: {WEBAPP_URL}"
     )
 
@@ -74,10 +81,7 @@ async def start(
     # Если локальный HTTP,
     # даём обычную ссылку для браузера.
 
-    if WEBAPP_URL.startswith(
-        "https://"
-    ):
-
+    if WEBAPP_URL.startswith("https://"):
         markup = InlineKeyboardMarkup(
             [
                 [
@@ -90,9 +94,7 @@ async def start(
                 ]
             ]
         )
-
     else:
-
         markup = InlineKeyboardMarkup(
             [
                 [
@@ -115,7 +117,6 @@ async def help_cmd(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ) -> None:
-
     await update.message.reply_text(
         "1) Добавьте сотрудников "
         "и тип графика\n"
@@ -130,17 +131,14 @@ async def help_cmd(
 
 
 def main() -> None:
-
     db.init_db()
 
     if not TOKEN:
-
         raise SystemExit(
             "Укажите BOT_TOKEN в файле .env"
         )
 
     if not WEBAPP_URL:
-
         raise SystemExit(
             "Укажите WEBAPP_URL в файле .env"
         )
