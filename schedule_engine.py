@@ -261,6 +261,7 @@ def next_month(
 def generate_month(
     year: int,
     month: int,
+    save: bool = True,
 ) -> dict[str, Any]:
 
     """
@@ -538,12 +539,13 @@ def generate_month(
         },
     }
 
-    db.save_schedule(
-        year,
-        month,
-        payload,
-        payload["generated_at"],
-    )
+    if save:
+        db.save_schedule(
+            year,
+            month,
+            payload,
+            payload["generated_at"],
+        )
 
     return payload
 

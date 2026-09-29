@@ -366,7 +366,7 @@ table.schedule thead th:first-child {
 
 .month-days-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(92px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
   gap: 8px;
   margin-bottom: 16px;
 }
@@ -795,4 +795,12 @@ dialog::backdrop {
 
 .btn-danger:hover {
   filter: brightness(1.08);
+}
+
+.month-day .day-names {
+  font-size: 11px;
+  line-height: 1.25;
+  color: var(--tg-text);
+  opacity: 0.85;
+  overflow-wrap: anywhere;
 }

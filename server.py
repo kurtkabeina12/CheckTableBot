@@ -47,6 +47,10 @@ SESSION_SECRET = os.getenv(
 ).strip()
 
 if not SESSION_SECRET:
+    print(
+        "WARNING: SESSION_SECRET не задан — сессии слетают "
+        "при перезапуске и не работают между воркерами."
+    )
     SESSION_SECRET = secrets.token_hex(32)
 
 WEBAPP_URL = os.getenv(
@@ -772,6 +776,10 @@ def api_auth_login(
         account["id"]
     )
 
+    # Фронтенду hash пароля не нужен.
+    account = dict(account)
+    account.pop("password_hash", None)
+
     return {
         "authenticated": True,
         "auth_type": "password",
@@ -1381,17 +1389,12 @@ def api_get_schedule(
             "Месяц должен быть 1–12",
         )
 
-    saved = db.get_schedule(
-        year,
-        month,
-    )
-
-    if saved:
-        return saved["payload"]
-
+    # Всегда считаем по актуальным данным
+    # (сотрудники, циклы, отпуска), без снимка из БД.
     return schedule_engine.generate_month(
         year,
         month,
+        save=False,
     )
 
 
@@ -1417,18 +1420,11 @@ def api_export_xlsx(
             "Месяц должен быть 1–12",
         )
 
-    payload = db.get_schedule(
+    data = schedule_engine.generate_month(
         year,
         month,
+        save=False,
     )
-
-    if payload:
-        data = payload["payload"]
-    else:
-        data = schedule_engine.generate_month(
-            year,
-            month,
-        )
 
     rows = schedule_engine.export_rows(
         data

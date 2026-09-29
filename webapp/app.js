@@ -122,11 +122,15 @@ async function api(path, options = {}) {
         JSON.stringify(data);
     } catch (_) {}
 
-    throw new Error(
+    const err = new Error(
       typeof msg === "string"
         ? msg
         : JSON.stringify(msg)
     );
+
+    err.status = res.status;
+
+    throw err;
   }
 
   if (res.status === 204) {
@@ -394,10 +398,8 @@ async function checkAuth() {
      */
 
     if (
-      e.message ===
-        "Not authenticated" ||
-      e.message ===
-        "Not authenticated"
+      e.status === 401 &&
+      !tg?.initData
     ) {
       state.auth = {
         authenticated: false,
@@ -3068,6 +3070,19 @@ $("#btn-back-days").addEventListener(
    MONTH DAYS
 ========================================================= */
 
+function dayNamesShort(names) {
+  const first = (names || []).map(
+    (n) => String(n).split(" ")[0]
+  );
+
+  const shown = first.slice(0, 3).join(", ");
+
+  return first.length > 3
+    ? `${shown} +${first.length - 3}`
+    : shown;
+}
+
+
 function renderMonthDays(
   payload
 ) {
@@ -3133,6 +3148,12 @@ function renderMonthDays(
 
             <div class="day-count">
               ${d.working_count} чел.
+            </div>
+
+            <div class="day-names">
+              ${escapeHtml(
+                dayNamesShort(d.working)
+              )}
             </div>
 
             <div class="meta">
