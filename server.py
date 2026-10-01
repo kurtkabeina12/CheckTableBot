@@ -8,12 +8,14 @@ import io
 import json
 import os
 import secrets
+import threading
 import time
 import urllib.parse
 from pathlib import Path
 
 import pandas as pd
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import (
     FileResponse,
@@ -94,13 +96,72 @@ HTTPS_ONLY = WEBAPP_URL.startswith(
     "https://"
 )
 
-app.add_middleware(
-    SessionMiddleware,
-    secret_key=SESSION_SECRET,
-    max_age=7 * 24 * 60 * 60,
-    same_site="lax",
-    https_only=HTTPS_ONLY,
-)
+# SessionMiddleware подключается ниже, ПОСЛЕ auth_middleware.
+
+
+# ============================================================
+# CACHES (in-memory)
+# ============================================================
+
+_cache_lock = threading.Lock()
+
+# --- расписание ---------------------------------------------
+_schedule_cache: dict[tuple[int, int], dict] = {}
+
+
+def cache_invalidate_schedules() -> None:
+    """Сброс после изменения сотрудников / отпусков."""
+    with _cache_lock:
+        _schedule_cache.clear()
+
+
+def build_schedule(year: int, month: int) -> dict:
+    """Считает график заново и кладёт в кэш."""
+    data = schedule_engine.generate_month(
+        year,
+        month,
+        save=False,
+    )
+
+    with _cache_lock:
+        _schedule_cache[(year, month)] = data
+
+    return data
+
+
+def get_or_build_schedule(year: int, month: int) -> dict:
+    """Из кэша, а если нет (перезапуск и т.п.) — считаем."""
+    with _cache_lock:
+        cached = _schedule_cache.get((year, month))
+
+    if cached is not None:
+        return cached
+
+    return build_schedule(year, month)
+
+
+# --- аккаунты (чтобы не ходить в БД на каждый запрос) -------
+ACCOUNT_TTL = 60  # секунд
+
+_account_cache: dict[tuple[str, int], tuple[float, dict]] = {}
+
+
+def cached_account(kind: str, key: int, loader):
+    now = time.monotonic()
+
+    with _cache_lock:
+        hit = _account_cache.get((kind, key))
+
+    if hit and now - hit[0] < ACCOUNT_TTL:
+        return hit[1]
+
+    account = loader(key)
+
+    if account:
+        with _cache_lock:
+            _account_cache[(kind, key)] = (now, account)
+
+    return account
 
 
 # ============================================================
@@ -381,8 +442,10 @@ def get_session_account(
         request.session.clear()
         return None
 
-    account = db.get_account_by_id(
-        account_id
+    account = cached_account(
+        "id",
+        account_id,
+        db.get_account_by_id,
     )
 
     if not account:
@@ -422,8 +485,10 @@ def get_request_account(
             user["id"]
         )
 
-        account = db.get_account_by_tg_id(
-            tg_id
+        account = cached_account(
+            "tg",
+            tg_id,
+            db.get_account_by_tg_id,
         )
 
         if not account:
@@ -553,8 +618,11 @@ async def auth_middleware(
     # --------------------------------------------------------
 
     try:
-        get_request_account(
-            request
+        # Синхронный запрос к БД — в потоке,
+        # иначе он блокирует ВСЕ остальные запросы.
+        await run_in_threadpool(
+            get_request_account,
+            request,
         )
 
     except HTTPException as exc:
@@ -574,6 +642,24 @@ async def auth_middleware(
         )
 
     return await call_next(request)
+
+
+# ============================================================
+# SESSION MIDDLEWARE
+# ============================================================
+
+# ВАЖНО: middleware, добавленный позже, оборачивает
+# добавленные раньше. Чтобы request.session был доступен
+# внутри auth_middleware, SessionMiddleware должен быть
+# добавлен ПОСЛЕ него (то есть быть внешним).
+
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=SESSION_SECRET,
+    max_age=7 * 24 * 60 * 60,
+    same_site="lax",
+    https_only=HTTPS_ONLY,
+)
 
 
 # ============================================================
@@ -1072,7 +1158,7 @@ def api_add_employee(
         schedule_type = "weekdays"
 
     try:
-        return db.save_employee_schedule(
+        result = db.save_employee_schedule(
             account_id=body.account_id,
             schedule_type=schedule_type,
             cycle_start=body.cycle_start,
@@ -1091,6 +1177,9 @@ def api_add_employee(
             note=body.note,
             active=body.active,
         )
+
+        cache_invalidate_schedules()
+        return result
 
     except ValueError as exc:
         raise HTTPException(
@@ -1202,6 +1291,7 @@ def api_update_employee(
             "Сотрудник не настроен",
         )
 
+    cache_invalidate_schedules()
     return employee
 
 
@@ -1229,6 +1319,8 @@ def api_delete_employee(
             404,
             "Настройка сотрудника не найдена",
         )
+
+    cache_invalidate_schedules()
 
     return {
         "ok": True
@@ -1277,12 +1369,15 @@ def api_add_vacation(
         )
 
     try:
-        return db.add_vacation(
+        result = db.add_vacation(
             body.emp_id,
             body.start_date,
             body.end_date,
             body.comment,
         )
+
+        cache_invalidate_schedules()
+        return result
 
     except Exception as exc:
         raise HTTPException(
@@ -1307,6 +1402,8 @@ def api_delete_vacation(
             404,
             "Отпуск не найден",
         )
+
+    cache_invalidate_schedules()
 
     return {
         "ok": True
@@ -1336,35 +1433,32 @@ def api_generate(
         body.next_month
         and body.year is None
     ):
-        return (
-            schedule_engine
-            .generate_next_month()
-        )
+        year, month = schedule_engine.next_month()
+    else:
+        if (
+            body.year is None
+            or body.month is None
+        ):
+            raise HTTPException(
+                400,
+                (
+                    "Укажите year и month "
+                    "или next_month=true"
+                ),
+            )
 
-    if (
-        body.year is None
-        or body.month is None
-    ):
-        raise HTTPException(
-            400,
-            (
-                "Укажите year и month "
-                "или next_month=true"
-            ),
-        )
+        if not (
+            1 <= body.month <= 12
+        ):
+            raise HTTPException(
+                400,
+                "Месяц должен быть 1–12",
+            )
 
-    if not (
-        1 <= body.month <= 12
-    ):
-        raise HTTPException(
-            400,
-            "Месяц должен быть 1–12",
-        )
+        year, month = body.year, body.month
 
-    return schedule_engine.generate_month(
-        body.year,
-        body.month,
-    )
+    # Пересчёт и обновление кэша.
+    return build_schedule(year, month)
 
 
 @app.get(
@@ -1389,12 +1483,12 @@ def api_get_schedule(
             "Месяц должен быть 1–12",
         )
 
-    # Всегда считаем по актуальным данным
-    # (сотрудники, циклы, отпуска), без снимка из БД.
-    return schedule_engine.generate_month(
+    # Из кэша; после перезапуска сервера кэш пуст —
+    # тогда считаем сразу, чтобы у пользователей
+    # график не пропадал.
+    return get_or_build_schedule(
         year,
         month,
-        save=False,
     )
 
 
@@ -1420,10 +1514,9 @@ def api_export_xlsx(
             "Месяц должен быть 1–12",
         )
 
-    data = schedule_engine.generate_month(
+    data = get_or_build_schedule(
         year,
         month,
-        save=False,
     )
 
     rows = schedule_engine.export_rows(

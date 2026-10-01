@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 
 from contextlib import contextmanager
 from pathlib import Path
@@ -12,6 +13,7 @@ from typing import Any, Iterator
 import psycopg
 from dotenv import load_dotenv
 from psycopg.rows import dict_row
+from psycopg_pool import ConnectionPool
 
 
 load_dotenv(
@@ -28,30 +30,55 @@ DATABASE_URL = os.getenv(
 # CONNECTION
 # ============================================================
 
-def get_connection():
-    if not DATABASE_URL:
-        raise RuntimeError(
-            "Не задана переменная DATABASE_URL"
-        )
+_pool: ConnectionPool | None = None
+_pool_lock = threading.Lock()
 
-    return psycopg.connect(
-        DATABASE_URL,
-        row_factory=dict_row,
-    )
+
+def get_pool() -> ConnectionPool:
+    """
+    Пул соединений с PostgreSQL.
+
+    Раньше на КАЖДЫЙ запрос открывалось новое соединение
+    (TCP + TLS + авторизация) — это очень долго при
+    удалённой БД. Теперь соединения переиспользуются.
+    """
+
+    global _pool
+
+    if _pool is None:
+        with _pool_lock:
+            if _pool is None:
+                if not DATABASE_URL:
+                    raise RuntimeError(
+                        "Не задана переменная DATABASE_URL"
+                    )
+
+                _pool = ConnectionPool(
+                    DATABASE_URL,
+                    min_size=1,
+                    max_size=8,
+                    timeout=30,
+                    max_idle=300,
+                    check=ConnectionPool.check_connection,
+                    kwargs={
+                        "row_factory": dict_row,
+                        "keepalives": 1,
+                        "keepalives_idle": 30,
+                        "keepalives_interval": 10,
+                        "keepalives_count": 3,
+                    },
+                    open=True,
+                )
+
+    return _pool
 
 
 @contextmanager
 def db() -> Iterator[Any]:
-    conn = get_connection()
-
-    try:
+    # commit при успехе, rollback при ошибке,
+    # соединение возвращается в пул.
+    with get_pool().connection() as conn:
         yield conn
-        conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
-    finally:
-        conn.close()
 
 
 # ============================================================
@@ -1191,6 +1218,7 @@ def save_schedule(
                 json.dumps(
                     payload,
                     ensure_ascii=False,
+                    default=str,
                 ),
             ),
         )

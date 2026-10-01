@@ -29,11 +29,6 @@ const WEEKDAY_NAMES = [
 ];
 
 const state = {
-  /*
-   * =========================
-   * AUTH
-   * =========================
-   */
 
   auth: {
     authenticated: false,
@@ -41,23 +36,12 @@ const state = {
     account: null,
   },
 
-  /*
-   * =========================
-   * ACCOUNTS
-   * =========================
-   */
 
   accounts: [],
 
   employees: [],
 
   vacations: [],
-
-  /*
-   * =========================
-   * LOCAL STORAGE
-   * =========================
-   */
 
   demandTemplates: JSON.parse(
     localStorage.getItem("demandTemplates") || "[]"
@@ -71,11 +55,6 @@ const state = {
     localStorage.getItem("bookings") || "[]"
   ),
 
-  /*
-   * =========================
-   * SCHEDULE
-   * =========================
-   */
 
   schedule: null,
 
@@ -86,11 +65,6 @@ const state = {
   bookingUserName:
     localStorage.getItem("bookingUserName") || "",
 };
-
-
-/* =========================================================
-   API
-========================================================= */
 
 async function api(path, options = {}) {
   const initData = tg?.initData || "";
@@ -139,16 +113,12 @@ async function api(path, options = {}) {
 
   return res.json();
 }
-
-
-/* =========================================================
-   AUTH
-========================================================= */
-
 let authMode = "login";
 
 
 function showLogin() {
+  $("#boot-screen")?.remove();
+
   $("#login-screen")?.classList.remove(
     "hidden"
   );
@@ -160,6 +130,8 @@ function showLogin() {
 
 
 function showApp() {
+  $("#boot-screen")?.remove();
+
   $("#login-screen")?.classList.add(
     "hidden"
   );
@@ -251,21 +223,6 @@ function configureAccess() {
 
   const isAdmin =
     role === "admin";
-
-  /*
-   * ADMIN:
-   * Люди
-   * Отпуска
-   * Потребность
-   * График
-   * Брони
-   *
-   * USER:
-   * Отпуска
-   * График
-   * Брони
-   */
-
   const allowedTabs = isAdmin
     ? [
         "people",
@@ -292,11 +249,6 @@ function configureAccess() {
     );
   });
 
-  /*
-   * Скрываем административные кнопки
-   * для обычного пользователя.
-   */
-
   const adminOnlyElements = [
     "#btn-refresh-accounts",
     "#btn-save-template",
@@ -319,16 +271,6 @@ function configureAccess() {
     }
   );
 
-  /*
-   * Для user оставляем вкладку
-   * Отпуска доступной для просмотра,
-   * но кнопка добавления скрыта.
-   *
-   * Это потому, что текущий backend
-   * использует account/employee ID,
-   * а список accounts доступен только admin.
-   */
-
   const addVacationButton =
     $("#btn-add-vac");
 
@@ -338,16 +280,6 @@ function configureAccess() {
       !isAdmin
     );
   }
-
-  /*
-   * Удаление отпусков также
-   * скрываем у обычного пользователя.
-   */
-
-  /*
-   * На вкладку schedule можно зайти
-   * всем авторизованным пользователям.
-   */
 
   switchTab(
     isAdmin
@@ -392,11 +324,6 @@ async function checkAuth() {
 
     return true;
   } catch (e) {
-    /*
-     * 401 означает просто:
-     * пользователь ещё не вошёл.
-     */
-
     if (
       e.status === 401 &&
       !tg?.initData
@@ -411,11 +338,6 @@ async function checkAuth() {
 
       return false;
     }
-
-    /*
-     * Telegram может вернуть 403,
-     * если tg_id не найден в accounts.
-     */
 
     if (
       tg?.initData &&
@@ -560,97 +482,85 @@ $("#login-form")?.addEventListener(
   }
 );
 
+let initAppPromise = null;
 
-/* =========================================================
-   AUTHORIZED APP INIT
-========================================================= */
+function initAuthorizedApp() {
+  if (!initAppPromise) {
+    initAppPromise = runInitAuthorizedApp()
+      .finally(() => {
+        initAppPromise = null;
+      });
+  }
 
-async function initAuthorizedApp() {
+  return initAppPromise;
+}
+
+
+async function loadScheduleForPicker() {
+  try {
+    const val =
+      $("#month-picker")?.value;
+
+    if (!val) {
+      return;
+    }
+
+    const [y, m] =
+      val.split("-").map(Number);
+
+    const payload =
+      await api(
+        `/api/schedule/${y}/${m}`
+      );
+
+    renderSchedule(payload);
+  } catch (e) {
+    console.log(
+      "График не загружен:",
+      e.message
+    );
+  }
+}
+
+
+async function runInitAuthorizedApp() {
   initMonthPicker();
 
   const isAdmin =
     state.auth.account?.role ===
     "admin";
 
-  /*
-   * Только admin может получать
-   * список всех accounts.
-   */
+  const tasks = [];
 
   if (isAdmin) {
-    await loadAccounts();
+    tasks.push(loadAccounts());
   }
 
-  /*
-   * Отпуска доступны всем
-   * авторизованным пользователям.
-   */
-
-  await loadVacations();
-
-  /*
-   * Потребность существует
-   * только у admin.
-   */
+  tasks.push(loadVacations());
+  tasks.push(loadScheduleForPicker());
 
   if (isAdmin) {
     loadDemand();
   }
 
-  /*
-   * Пытаемся показать уже
-   * существующий график.
-   *
-   * Здесь НЕ генерируем график.
-   */
-
-  try {
-    const val =
-      $("#month-picker")
-        ?.value;
-
-    if (val) {
-      const [y, m] =
-        val
-          .split("-")
-          .map(Number);
-
-      const payload =
-        await api(
-          `/api/schedule/${y}/${m}`
-        );
-
-      renderSchedule(
-        payload
-      );
-    }
-  } catch (e) {
-    /*
-     * Графика может ещё не быть.
-     * Это нормально.
-     */
-
-    console.log(
-      "Графика ещё нет:",
-      e.message
-    );
-  }
+  await Promise.all(tasks);
 
   renderBookings();
 }
-
-
-/* =========================================================
-   HELPERS
-========================================================= */
 
 function toast(
   msg,
   isError = false
 ) {
-  if (tg?.showAlert) {
-    tg.showAlert(msg);
-    return;
+  // showAlert работает только внутри Telegram версии 6.2+
+  if (
+    tg?.initData &&
+    tg.isVersionAtLeast?.("6.2")
+  ) {
+    try {
+      tg.showAlert(msg);
+      return;
+    } catch (_) {}
   }
 
   alert(msg);
@@ -716,22 +626,11 @@ function saveLocalState() {
   );
 }
 
-
-/* =========================================================
-   TABS
-========================================================= */
-
 $$(".tab").forEach(
   (btn) => {
     btn.addEventListener(
       "click",
       () => {
-        /*
-         * Защита frontend:
-         * нельзя вручную открыть
-         * запрещённую вкладку.
-         */
-
         const role =
           state.auth.account?.role;
 
@@ -791,11 +690,6 @@ function switchTab(tabName) {
     }
   );
 }
-
-
-/* =========================================================
-   PEOPLE / ACCOUNTS
-========================================================= */
 
 function patternLabel(emp) {
   const t =
@@ -1051,11 +945,6 @@ function toggleTypeFields() {
     .required = cycle;
 }
 
-
-/* =========================================================
-   ACCOUNT LIST
-========================================================= */
-
 async function loadAccounts() {
   state.accounts =
     await api(
@@ -1179,11 +1068,6 @@ function renderEmployees() {
       })
       .join("");
 }
-
-
-/* =========================================================
-   EMPLOYEE MODAL
-========================================================= */
 
 function openEmpModal(
   account
@@ -1408,11 +1292,6 @@ $("#emp-form").addEventListener(
   }
 );
 
-
-/* =========================================================
-   PEOPLE EVENTS
-========================================================= */
-
 $("#emp-list").addEventListener(
   "click",
   async (ev) => {
@@ -1529,11 +1408,6 @@ $("#btn-refresh-accounts")
       }
     }
   );
-
-
-/* =========================================================
-   VACATIONS
-========================================================= */
 
 function fillVacEmpSelect() {
   const sel =
@@ -1800,11 +1674,6 @@ $("#vac-list").addEventListener(
     }
   }
 );
-
-
-/* =========================================================
-   DEMAND — LOCALSTORAGE ONLY
-========================================================= */
 
 function renderDemandTemplates() {
   const grid =
@@ -2099,11 +1968,6 @@ $("#override-list").addEventListener(
   }
 );
 
-
-/* =========================================================
-   BOOKINGS — LOCALSTORAGE ONLY
-========================================================= */
-
 function getBookingUserName() {
   const current =
     state.bookingUserName ||
@@ -2392,11 +2256,6 @@ $("#booking-list").addEventListener(
   }
 );
 
-
-/* =========================================================
-   SCHEDULE
-========================================================= */
-
 function setMonthPicker(
   year,
   month
@@ -2519,37 +2378,31 @@ function peopleForDay(
       continue;
     }
 
-    const range =
-      splitTimeRange(
-        cell.time ||
-          person.time_label ||
-          ""
-      );
+    const timeText =
+      cell.time ||
+      person.time_label ||
+      "";
 
-    result.push({
-      name:
-        person.name,
+    const ranges = timeText
+      .split(",")
+      .map((x) => x.trim())
+      .filter(Boolean);
 
-      time:
-        cell.time ||
-        person.time_label ||
-        "",
+    for (const t of (ranges.length ? ranges : [""])) {
+      const range = splitTimeRange(t);
 
-      start:
-        range.start,
-
-      end:
-        range.end,
-
-      startMin:
-        range.startMin ??
-        24 * 60,
-
-      endMin:
-        range.endMin ??
-        range.startMin ??
-        24 * 60,
-    });
+      result.push({
+        name: person.name,
+        time: t,
+        start: range.start,
+        end: range.end,
+        startMin: range.startMin ?? 24 * 60,
+        endMin:
+          range.endMin ??
+          range.startMin ??
+          24 * 60,
+      });
+    }
   }
 
   result.sort(
@@ -2684,11 +2537,6 @@ function showDaysView() {
     );
 }
 
-
-/* =========================================================
-   LOCAL BOOKINGS FROM SCHEDULE
-========================================================= */
-
 function syncBookingsFromSchedule(
   payload
 ) {
@@ -2771,11 +2619,6 @@ function syncBookingsFromSchedule(
 
   renderBookings();
 }
-
-
-/* =========================================================
-   DAY VIEW
-========================================================= */
 
 function openDayView(
   dateIso
@@ -3065,11 +2908,6 @@ $("#btn-back-days").addEventListener(
   showDaysView
 );
 
-
-/* =========================================================
-   MONTH DAYS
-========================================================= */
-
 function dayNamesShort(names) {
   const first = (names || []).map(
     (n) => String(n).split(" ")[0]
@@ -3171,11 +3009,6 @@ function renderMonthDays(
       })
       .join("");
 }
-
-
-/* =========================================================
-   FULL SCHEDULE RENDER
-========================================================= */
 
 function renderSchedule(
   payload
@@ -3473,11 +3306,6 @@ function renderSchedule(
   }
 }
 
-
-/* =========================================================
-   SCHEDULE EVENTS
-========================================================= */
-
 $("#panel-schedule")
   .addEventListener(
     "click",
@@ -3556,19 +3384,9 @@ $("#panel-schedule")
     }
   );
 
-
-/* =========================================================
-   GENERATION
-========================================================= */
-
 async function generate(
   opts
 ) {
-  /*
-   * Генерация разрешена
-   * только admin.
-   */
-
   const isAdmin =
     state.auth.account?.role ===
     "admin";
@@ -3610,11 +3428,6 @@ async function generate(
     );
   }
 }
-
-
-/* =========================================================
-   CONFIRM MODAL
-========================================================= */
 
 function showConfirmModal({
   title =
@@ -3701,16 +3514,7 @@ function showConfirmModal({
 }
 
 
-/* =========================================================
-   REBUILD SCHEDULE
-========================================================= */
-
 async function rebuildAndShowSchedule() {
-  /*
-   * Эта функция нужна только admin,
-   * потому что она вызывает generation.
-   */
-
   const isAdmin =
     state.auth.account?.role ===
     "admin";
@@ -3750,21 +3554,11 @@ async function rebuildAndShowSchedule() {
 async function reloadCurrentSchedule(
   switchToSchedule = true
 ) {
-  /*
-   * Перегенерация нужна только admin.
-   */
-
   const isAdmin =
     state.auth.account?.role ===
     "admin";
 
   if (!isAdmin) {
-    /*
-     * Для user просто
-     * перечитываем существующий
-     * график.
-     */
-
     if (!state.schedule) {
       return;
     }
@@ -3840,10 +3634,6 @@ async function refreshScheduleIfLoaded() {
 }
 
 
-/* =========================================================
-   GENERATION BUTTONS
-========================================================= */
-
 $("#btn-gen-next")
   .addEventListener(
     "click",
@@ -3877,10 +3667,6 @@ $("#btn-gen-current")
   );
 
 
-/* =========================================================
-   MONTH PICKER
-========================================================= */
-
 $("#month-picker")
   .addEventListener(
     "change",
@@ -3904,11 +3690,6 @@ $("#month-picker")
         "admin";
 
       try {
-        /*
-         * ADMIN:
-         * генерируем выбранный месяц.
-         */
-
         if (isAdmin) {
           const payload =
             await api(
@@ -3935,12 +3716,6 @@ $("#month-picker")
           return;
         }
 
-        /*
-         * USER:
-         * только смотрим существующий
-         * график.
-         */
-
         const payload =
           await api(
             `/api/schedule/${y}/${m}`
@@ -3958,10 +3733,6 @@ $("#month-picker")
     }
   );
 
-
-/* =========================================================
-   INIT MONTH PICKER
-========================================================= */
 
 function initMonthPicker() {
   const now =
@@ -3985,9 +3756,22 @@ function initMonthPicker() {
 }
 
 
-/* =========================================================
-   INIT
-========================================================= */
+/*
+ * Пока проверяется сессия, форму входа не показываем:
+ * иначе можно успеть войти второй раз и запросы задваиваются.
+ */
+(function showBoot() {
+  $("#login-screen")?.classList.add("hidden");
+
+  const boot = document.createElement("div");
+
+  boot.id = "boot-screen";
+  boot.className = "empty";
+  boot.textContent = "Загрузка…";
+
+  document.body.prepend(boot);
+})();
+
 
 (async function init() {
   try {
@@ -4007,12 +3791,6 @@ function initMonthPicker() {
     if (!authenticated) {
       return;
     }
-
-    /*
-     * Только после авторизации
-     * загружаем приложение.
-     */
-
     await initAuthorizedApp();
   } catch (e) {
     console.error(

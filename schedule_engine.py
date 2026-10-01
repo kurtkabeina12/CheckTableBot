@@ -560,6 +560,27 @@ def generate_next_month() -> dict[str, Any]:
     )
 
 
+def get_saved_month(
+    year: int,
+    month: int,
+) -> dict[str, Any] | None:
+    """
+    Читает уже сохранённый график из БД.
+
+    Ожидает: db.get_schedule(year, month) -> dict | None
+    """
+
+    getter = getattr(db, "get_schedule", None)
+
+    if getter is None:
+        return None
+
+    try:
+        return getter(year, month)
+    except Exception:
+        return None
+
+
 def export_rows(
     payload: dict[str, Any],
 ) -> list[dict[str, str]]:

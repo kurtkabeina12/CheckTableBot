@@ -1,7 +1,7 @@
 :root {
   --bg0: #0f1412;
   --bg1: #17201c;
-  --bg2: #1f2b26;
+  --bg2: #a5adaa39;
   --line: rgba(214, 230, 220, 0.12);
   --text: #e8f2ec;
   --muted: #9bb0a5;
@@ -78,6 +78,10 @@ html, body {
   border: 0;
   background: none;
   cursor: pointer;
+}
+
+.auth-title {
+  color: black;
 }
 
 .login-error {
@@ -292,6 +296,10 @@ input, select {
   color: var(--tg-text);
   padding: 10px 12px;
   font: inherit;
+}
+
+.login-form input {
+  color: black !important;
 }
 
 .table-wrap {

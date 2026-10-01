@@ -18,22 +18,15 @@
 
 <body>
 
-  <!-- ========================= -->
-
-  <!-- ЭКРАН АВТОРИЗАЦИИ -->
-
-  <!-- ========================= -->
-
   <div class="login-screen" id="login-screen">
 
-```
 <div class="login-card">
 
   <p class="eyebrow">
     Планирование смен
   </p>
 
-  <h1 id="auth-title">
+  <h1 class="auth-title" id="auth-title">
     Вход
   </h1>
 
@@ -41,7 +34,7 @@
     Введите логин и пароль
   </p>
 
-  <form id="login-form">
+  <form class="login-form" id="login-form">
 
     <label>
       Логин
@@ -87,19 +80,10 @@
   </button>
 
 </div>
-```
 
   </div>
 
-  <!-- ========================= -->
-
-  <!-- ОСНОВНОЕ ПРИЛОЖЕНИЕ -->
-
-  <!-- ========================= -->
-
   <div class="app hidden" id="app">
-
-```
 <header class="top">
 
   <div>
@@ -161,10 +145,6 @@
 
 <main>
 
-  <!-- ========================= -->
-  <!-- PEOPLE -->
-  <!-- ========================= -->
-
   <section
     id="panel-people"
     class="panel active"
@@ -199,10 +179,6 @@
   </section>
 
 
-  <!-- ========================= -->
-  <!-- VACATIONS -->
-  <!-- ========================= -->
-
   <section
     id="panel-vacations"
     class="panel"
@@ -231,10 +207,6 @@
 
   </section>
 
-
-  <!-- ========================= -->
-  <!-- DEMAND -->
-  <!-- ========================= -->
 
   <section
     id="panel-demand"
@@ -292,10 +264,6 @@
 
   </section>
 
-
-  <!-- ========================= -->
-  <!-- SCHEDULE -->
-  <!-- ========================= -->
 
   <section
     id="panel-schedule"
@@ -450,10 +418,6 @@
   </section>
 
 
-  <!-- ========================= -->
-  <!-- BOOKINGS -->
-  <!-- ========================= -->
-
   <section
     id="panel-bookings"
     class="panel"
@@ -481,19 +445,11 @@
   </section>
 
 </main>
-```
 
   </div>
 
-  <!-- ========================= -->
-
-  <!-- EMPLOYEE MODAL -->
-
-  <!-- ========================= -->
-
   <dialog id="emp-modal">
 
-```
 <form
   method="dialog"
   id="emp-form"
@@ -666,19 +622,11 @@
   </div>
 
 </form>
-```
 
   </dialog>
 
-  <!-- ========================= -->
-
-  <!-- OVERRIDE MODAL -->
-
-  <!-- ========================= -->
-
   <dialog id="override-modal">
 
-```
 <form
   method="dialog"
   id="override-form"
@@ -741,19 +689,10 @@
   </div>
 
 </form>
-```
 
   </dialog>
 
-  <!-- ========================= -->
-
-  <!-- VACATION MODAL -->
-
-  <!-- ========================= -->
-
   <dialog id="vac-modal">
-
-```
 <form
   method="dialog"
   id="vac-form"
@@ -829,22 +768,13 @@
   </div>
 
 </form>
-```
 
   </dialog>
-
-  <!-- ========================= -->
-
-  <!-- CONFIRM MODAL -->
-
-  <!-- ========================= -->
 
   <div
     class="modal-backdrop hidden"
     id="confirm-modal"
   >
-
-```
 <div class="modal">
 
   <h3 id="confirm-title">
@@ -878,15 +808,8 @@
   </div>
 
 </div>
-```
 
   </div>
-
-  <!-- ========================= -->
-
-  <!-- APP JS -->
-
-  <!-- ========================= -->
 
   <script src="/static/app.js"></script>
 
